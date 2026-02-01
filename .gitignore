@@ -138,3 +138,5 @@ scripts/**/*.csv
 scripts/**/*.obj
 
 .vscode
+
+geomstats/

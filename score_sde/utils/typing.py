@@ -7,7 +7,7 @@ ParametrisedScoreFunction = Callable[[dict, dict, jnp.ndarray, float], jnp.ndarr
 ScoreFunction = Callable[[jnp.ndarray, float], jnp.ndarray]
 
 SDEUpdateFunction = Callable[
-    [jax.random.KeyArray, jnp.ndarray, float],
+    [jax.Array, jnp.ndarray, float],
     Tuple[
         jnp.ndarray,
         jnp.ndarray,
