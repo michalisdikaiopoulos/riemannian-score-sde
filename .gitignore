@@ -140,3 +140,5 @@ scripts/**/*.obj
 .vscode
 
 geomstats/
+
+experiment_commands.txt
