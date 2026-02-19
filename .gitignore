@@ -117,6 +117,9 @@ venv.bak/
 # Rope project settings
 .ropeproject
 
+# Pycharm project settings
+.idea
+
 # mkdocs documentation
 /site
 
@@ -142,3 +145,5 @@ scripts/**/*.obj
 geomstats/
 
 experiment_commands.txt
+
+transfer_host_commands.txt

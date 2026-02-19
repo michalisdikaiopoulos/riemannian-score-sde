@@ -110,11 +110,11 @@ class Brownian(Langevin):
         self.tf = beta_schedule.tf
         self.t0 = beta_schedule.t0
 
-    # def coefficients(self, x, t):
-    #     beta_t = self.beta_schedule.beta_t(t)
-    #     drift = jnp.zeros_like(x)
-    #     diffusion = jnp.sqrt(beta_t)
-    #     return drift, diffusion
+    def coefficients(self, x, t):
+        beta_t = self.beta_schedule.beta_t(t)
+        drift = jnp.zeros_like(x)
+        diffusion = jnp.sqrt(beta_t)
+        return drift, diffusion
 
     def grad_marginal_log_prob(self, x0, x, t, **kwargs):
         s = self.beta_schedule.rescale_t(t)

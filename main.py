@@ -1,7 +1,7 @@
 import os
 import hydra
 
-# from score_sde.utils.cfg import *
+from score_sde.utils.cfg import *
 
 
 @hydra.main(config_path="config", config_name="main")
