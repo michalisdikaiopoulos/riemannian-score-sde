@@ -2,6 +2,8 @@ import os
 import socket
 import logging
 from timeit import default_timer as timer
+
+import numpy as np
 from tqdm import tqdm
 
 import jax
@@ -18,7 +20,7 @@ from score_sde.utils import TrainState, save, restore
 from score_sde.utils.loggers_pl import LoggerCollection
 from score_sde.datasets import random_split, DataLoader, TensorDataset
 from riemannian_score_sde.utils.normalization import compute_normalization
-from riemannian_score_sde.utils.vis import plot, plot_ref
+from riemannian_score_sde.utils.vis import plot, plot_ref, animate_sampling
 
 log = logging.getLogger(__name__)
 
@@ -65,9 +67,38 @@ def run(cfg):
                     logger.log_metrics({"val/time_per_it": (timer() - eval_time)}, step)
                 if cfg.train_plot:
                     generate_plots(train_state, "val", step=step)
+
+                    volcano_data = []
+                    for batch in eval_ds:
+                        volcano_data.append(batch[0])
+                    volcano_data = np.concatenate(volcano_data, axis=0)
+
+                    animate_sampling(
+                        pushforward=pushforward,
+                        model=model,
+                        train_state=train_state,
+                        epoch=step,
+                        cfg=cfg,
+                        volcano_data=volcano_data,
+                        save_path=os.path.join(run_path, 'animations')
+                    )
                 train_time = timer()
 
         logger.log_metrics({"train/total_time": total_train_time}, step)
+
+        if cfg.train_plot:
+            print(f"Generating final animation at step {cfg.steps}...")
+            volcano_data, _ = next(eval_ds)
+            animate_sampling(
+                pushforward=pushforward,
+                model=model,
+                train_state=train_state,
+                epoch=cfg.steps,  # Use cfg.steps (50000)
+                cfg=cfg,
+                volcano_data=volcano_data,
+                save_path=os.path.join(run_path, 'animations')
+            )
+
         return train_state, True
 
     def evaluate(train_state, stage, step=None):

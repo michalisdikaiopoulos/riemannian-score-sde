@@ -181,6 +181,36 @@ class SDEPushForward(PushForward):
             raise ValueError(self.diffeq)
         return sample
 
+    def get_sampler_with_trajectory(
+            self, model_w_dicts, train=False, reverse=True, transform=True, **kwargs
+    ):
+        """Returns sampler that outputs full trajectory"""
+
+        if self.diffeq == "sde":
+            def sample_with_traj(rng, shape, context, z=None):
+                z = self.base.sample(rng, shape) if z is None else z
+                score_fn = self.sde.reparametrise_score_fn(*model_w_dicts)
+                score_fn = partial(score_fn, context=context)
+                sde = self.sde.reverse(score_fn) if reverse else self.sde
+
+                # Add return_hist=True
+                sampler = get_pc_sampler(sde, return_hist=True, **kwargs)
+                sampler = jax.jit(sampler)
+
+                # Unpack tuple
+                x_final, x_hist, timesteps = sampler(rng, z)
+
+                # Transform ONLY x_hist (the trajectory)
+                if transform:
+                    x_hist = jax.vmap(self.transform)(x_hist)  # vmap over time dimension
+
+                return x_hist, timesteps  # Return trajectory + times
+
+            return sample_with_traj
+
+        else:
+            raise ValueError(self.diffeq)
+
 
 class MoserFlow(PushForward):
     """Following https://github.com/noamroze/moser_flow/blob/main/moser.py#L36"""

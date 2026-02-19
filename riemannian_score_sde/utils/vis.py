@@ -6,6 +6,7 @@ import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from matplotlib.patches import Circle
+from matplotlib.animation import FuncAnimation
 import seaborn as sns
 
 # plt.rcParams["text.usetex"] = True
@@ -33,6 +34,8 @@ try:
 except ImportError as error:
     plt.switch_backend("agg")
 import seaborn as sns
+import os
+from matplotlib import cm
 
 try:
     import cartopy.crs as ccrs
@@ -710,3 +713,181 @@ def plot_ref(manifold, xt, size=10, log_prob=None):
         print("Only plotting over R^3, S^2 and SO(3) is implemented.")
         return None
     return fig
+
+
+def animate_sampling(pushforward, model, train_state, epoch, cfg,
+                     volcano_data=None, n_samples=3, save_path='./animations'):
+    """
+    Create MP4 animation with density heatmap and volcano markers
+
+    Args:
+        pushforward: SDEPushForward instance
+        model: Score network model
+        train_state: Current training state
+        epoch: Current epoch number
+        cfg: Configuration object
+        volcano_data: True volcano locations (N, 3) array
+        n_samples: Number of trajectories to visualize (default: 2)
+        save_path: Directory to save animation
+    """
+    import os
+    import matplotlib.pyplot as plt
+    from matplotlib.animation import FuncAnimation
+    from matplotlib import cm
+    import numpy as np
+
+    os.makedirs(save_path, exist_ok=True)
+
+    # Get trajectory sampler
+    model_w_dicts = (model, train_state.params_ema, train_state.model_state)
+    sampler = pushforward.get_sampler_with_trajectory(
+        model_w_dicts,
+        N=100,
+        eps=cfg.eps,
+        predictor="GRW"
+    )
+
+    # Sample trajectory
+    rng = jax.random.PRNGKey(42)
+    trajectory, timesteps = sampler(rng, shape=(n_samples,), context=None)
+
+    # Convert to numpy
+    trajectory = np.array(trajectory)
+    timesteps = np.array(timesteps)
+
+    if volcano_data is not None:
+        volcano_data = np.array(volcano_data)
+
+    # ===== CREATE DENSITY HEATMAP =====
+    # Create grid on sphere
+    n_lat, n_lon = 50, 100
+    lat = np.linspace(-np.pi / 2, np.pi / 2, n_lat)
+    lon = np.linspace(-np.pi, np.pi, n_lon)
+    lon_grid, lat_grid = np.meshgrid(lon, lat)
+
+    # Convert to Cartesian
+    x_sphere = np.cos(lat_grid) * np.cos(lon_grid)
+    y_sphere = np.cos(lat_grid) * np.sin(lon_grid)
+    z_sphere = np.sin(lat_grid)
+
+    # Compute density at each grid point (distance-based)
+    if volcano_data is not None:
+        density = np.zeros((n_lat, n_lon))
+
+        for i in range(n_lat):
+            for j in range(n_lon):
+                point = np.array([x_sphere[i, j], y_sphere[i, j], z_sphere[i, j]])
+
+                # Compute distances to all volcanoes
+                distances = np.linalg.norm(volcano_data - point, axis=1)
+
+                # Gaussian kernel density (smaller distance = higher density)
+                bandwidth = 0.3  # Adjust this to control spread
+                density[i, j] = np.sum(np.exp(-distances ** 2 / (2 * bandwidth ** 2)))
+
+        # Normalize density
+        density = (density - density.min()) / (density.max() - density.min())
+    else:
+        density = np.zeros((n_lat, n_lon))
+
+    # Create animation
+    fig = plt.figure(figsize=(12, 10))
+    ax = fig.add_subplot(111, projection='3d')
+
+    # Generate colors for all samples (rainbow gradient)
+    colors = plt.cm.rainbow(np.linspace(0, 1, n_samples))
+
+    # CREATE COLORBAR ONCE
+    m = cm.ScalarMappable(cmap=cm.hot)
+    m.set_array(density)
+    cbar = fig.colorbar(m, ax=ax, shrink=0.5, aspect=10, pad=0.1)
+    cbar.set_label('Volcano Density', fontsize=10)
+
+    def update(frame):
+        ax.clear()
+
+        # ax.view_init(elev=20, azim=180)  # Rotate 180 degrees
+
+        # Use density as color map
+        facecolors = cm.hot(density)  # Hot colormap (dark to bright)
+        facecolors[:, :, 3] = 0.6  # Set transparency
+
+        ax.plot_surface(x_sphere, y_sphere, z_sphere,
+                        facecolors=facecolors,
+                        rstride=1, cstride=1,
+                        linewidth=0, antialiased=True,
+                        shade=False)
+
+        if volcano_data is not None:
+            ax.scatter(volcano_data[:, 0],
+                       volcano_data[:, 1],
+                       volcano_data[:, 2],
+                       c='yellow', s=100, alpha=0.9,
+                       marker='*',
+                       edgecolors='black',
+                       linewidths=1.5,
+                       label='True Volcanoes')
+
+        for sample_idx in range(n_samples):
+            path = trajectory[:frame + 1, sample_idx, :]
+
+            # Draw trajectory line
+            if frame > 0:
+                ax.plot(path[:, 0], path[:, 1], path[:, 2],
+                        color=colors[sample_idx],
+                        linewidth=3,
+                        alpha=0.8,
+                        zorder=100)  # Draw on top
+
+            # Draw current position
+            current_pos = trajectory[frame, sample_idx, :]
+            ax.scatter(current_pos[0], current_pos[1], current_pos[2],
+                       c=[colors[sample_idx]], s=250, alpha=1.0,
+                       edgecolors='white', linewidths=2.5,
+                       zorder=101,
+                       label=f'Sample {sample_idx + 1}' if frame == 0 else '')
+
+        if volcano_data is not None:
+            distances = []
+            for sample_idx in range(n_samples):
+                current_pos = trajectory[frame, sample_idx, :]
+                dists = np.linalg.norm(volcano_data - current_pos, axis=1)
+                min_dist = np.min(dists)
+                distances.append(min_dist)
+
+            dist_text = ""
+        else:
+            dist_text = ""
+
+        t = float(timesteps[frame].flatten()[0])
+        ax.set_title(f'Reverse Diffusion Sampling\n' +
+                     f't = {t:.3f} | Epoch {epoch}{dist_text}',
+                     fontsize=14, pad=20, fontweight='bold')
+
+        ax.set_box_aspect([1, 1, 1])
+        ax.set_xlim([-1.2, 1.2])
+        ax.set_ylim([-1.2, 1.2])
+        ax.set_zlim([-1.2, 1.2])
+        ax.axis('off')
+
+        # Legend (only show if not too many samples)
+        if frame == 0 and n_samples <= 5:
+            ax.legend(loc='upper left', fontsize=11, framealpha=0.9)
+
+    # Create animation
+    anim = FuncAnimation(fig, update, frames=len(timesteps), interval=100)
+
+    output_file = os.path.join(save_path, f'sampling_epoch_{epoch}_samples_{n_samples}.mp4')
+
+    try:
+        anim.save(output_file, writer='ffmpeg', fps=10, dpi=100)
+        print(f"Animation saved: {output_file}")
+    except Exception as e:
+        print(f"Failed to save animation: {e}")
+        # Try saving as GIF fallback
+        gif_file = output_file.replace('.mp4', '.gif')
+        anim.save(gif_file, writer='pillow', fps=10)
+        print(f"Saved as GIF instead: {gif_file}")
+
+    plt.close()
+    return output_file
