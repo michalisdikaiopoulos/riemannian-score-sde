@@ -141,36 +141,42 @@ def get_spherical_grid(N, eps=0.0):
     return xs, lat, lon
 
 
-def plot_3d(x0, xt, size, prob=None):
+def plot_3d(x0, xt, size, prob=None, vectors=None, vector_origins=None):
     fig = plt.figure(figsize=(size, size))
     ax = fig.add_subplot(111, projection="3d")
     ax = remove_background(ax)
     fig.subplots_adjust(left=-0.2, bottom=-0.2, right=1.2, top=1.2, wspace=0, hspace=0)
-    # ax.view_init(elev=30, azim=45)
     ax.view_init(elev=0, azim=0)
     cmap = sns.cubehelix_palette(as_cmap=True)
     sphere = visualization.Sphere()
     sphere.draw(ax, color="red", marker=".")
-    # sphere_plot(ax)
-    # sphere.plot_heatmap(ax, pdf, n_points=16000, alpha=0.2, cmap=cmap)
+
     if x0 is not None:
         cax = ax.scatter(x0[:, 0], x0[:, 1], x0[:, 2], s=50, color="green")
+
     if xt is not None:
         x, y, z = xt[:, 0], xt[:, 1], xt[:, 2]
         c = prob(xt) if prob is not None else "blue"
         cax = ax.scatter(x, y, z, s=50, vmin=0.0, vmax=2.0, c=c, cmap=cmap)
-    # if grad is not None:
-    #     u, v, w = grad[:, 0], grad[:, 1], grad[:, 2]
-    #     quiver = ax.quiver(
-    #         x, y, z, u, v, w, length=0.2, lw=2, normalize=False, cmap=cmap
-    #     )
-    #     quiver.set_array(c)
+        plt.colorbar(cax)
 
-    plt.colorbar(cax)
-    # plt.savefig(out, dpi=dpi, bbox_inches="tight", transparent=True)
+    if vectors is not None and vector_origins is not None:
+        x, y, z = vector_origins[:, 0], vector_origins[:, 1], vector_origins[:, 2]
+        u, v, w = vectors[:, 0], vectors[:, 1], vectors[:, 2]
+        mags = np.linalg.norm(vectors, axis=-1)
+        norm = plt.Normalize(vmin=mags.min(), vmax=mags.max())
+        arrow_colors = plt.cm.plasma(norm(mags))
+        ax.quiver(
+            x, y, z, u, v, w,
+            length=0.15,
+            lw=1.2,
+            normalize=True,
+            colors=arrow_colors,
+            arrow_length_ratio=0.35,
+        )
+
     plt.close(fig)
     return fig
-
 
 def earth_plot(cfg, log_prob, train_ds, test_ds, N, azimuth=None, samples=None):
     """generate earth plots with model density or integral paths aka streamplot"""
@@ -657,12 +663,12 @@ def plot_poincare(
     return fig
 
 
-def plot(manifold, x0, xt, log_prob=None, size=10):
+def plot(manifold, x0, xt, log_prob=None, vectors=None, vector_origins=None, size=10):
     prob = None if log_prob is None else lambda x: jnp.exp(log_prob(x))
     if isinstance(manifold, Euclidean) and manifold.dim == 3:
-        fig = plot_3d(x0, xt, size, prob=prob)
+        fig = plot_3d(x0, xt, size, prob=prob, vectors=vectors, vector_origins=vector_origins)
     elif isinstance(manifold, Hypersphere) and manifold.dim == 2:
-        fig = plot_3d(x0, xt, size, prob=prob)
+        fig = plot_3d(x0, xt, size, prob=prob, vectors=vectors, vector_origins=vector_origins)
     elif isinstance(manifold, _SpecialOrthogonalMatrices) and manifold.dim == 3:
         fig = plot_so3(x0, xt, size, prob=prob)
     elif (
@@ -807,6 +813,7 @@ def animate_sampling(pushforward, model, train_state, epoch, cfg,
         ax.clear()
 
         # ax.view_init(elev=20, azim=180)  # Rotate 180 degrees
+        ax.view_init(elev=0, azim=0)
 
         # Use density as color map
         facecolors = cm.hot(density)  # Hot colormap (dark to bright)
