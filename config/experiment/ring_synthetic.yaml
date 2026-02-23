@@ -1,0 +1,6 @@
+# @package _global_
+name: ring_synthetic
+experiment: ring_synthetic
+defaults:
+  - earth_data
+  - /dataset: ring_synthetic
