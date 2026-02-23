@@ -716,7 +716,7 @@ def plot_ref(manifold, xt, size=10, log_prob=None):
 
 
 def animate_sampling(pushforward, model, train_state, epoch, cfg,
-                     volcano_data=None, n_samples=3, save_path='./animations'):
+                     volcano_data=None, n_samples=5, save_path='./animations'):
     """
     Create MP4 animation with density heatmap and volcano markers
 
@@ -792,7 +792,7 @@ def animate_sampling(pushforward, model, train_state, epoch, cfg,
 
     # Create animation
     fig = plt.figure(figsize=(12, 10))
-    ax = fig.add_subplot(111, projection='3d')
+    ax = fig.add_subplot(111, projection='3d', computed_zorder=False)
 
     # Generate colors for all samples (rainbow gradient)
     colors = plt.cm.rainbow(np.linspace(0, 1, n_samples))
@@ -816,7 +816,7 @@ def animate_sampling(pushforward, model, train_state, epoch, cfg,
                         facecolors=facecolors,
                         rstride=1, cstride=1,
                         linewidth=0, antialiased=True,
-                        shade=False)
+                        shade=False, zorder=9)
 
         if volcano_data is not None:
             ax.scatter(volcano_data[:, 0],
@@ -826,25 +826,26 @@ def animate_sampling(pushforward, model, train_state, epoch, cfg,
                        marker='*',
                        edgecolors='black',
                        linewidths=1.5,
-                       label='True Volcanoes')
+                       label='True Volcanoes',
+                       zorder=10)
 
         for sample_idx in range(n_samples):
             path = trajectory[:frame + 1, sample_idx, :]
 
             # Draw trajectory line
-            if frame > 0:
-                ax.plot(path[:, 0], path[:, 1], path[:, 2],
-                        color=colors[sample_idx],
-                        linewidth=3,
-                        alpha=0.8,
-                        zorder=100)  # Draw on top
+            # if frame > 0:
+            #     ax.plot(path[:, 0], path[:, 1], path[:, 2],
+            #             color=colors[sample_idx],
+            #             linewidth=3,
+            #             alpha=0.8,
+            #             zorder=20)  # Draw on top
 
             # Draw current position
             current_pos = trajectory[frame, sample_idx, :]
             ax.scatter(current_pos[0], current_pos[1], current_pos[2],
                        c=[colors[sample_idx]], s=250, alpha=1.0,
                        edgecolors='white', linewidths=2.5,
-                       zorder=101,
+                       zorder=30,
                        label=f'Sample {sample_idx + 1}' if frame == 0 else '')
 
         if volcano_data is not None:
