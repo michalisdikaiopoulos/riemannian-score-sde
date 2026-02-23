@@ -1,0 +1,5 @@
+_target_: riemannian_score_sde.datasets.kent_synthetic.KentSynthetic
+n_samples: 2000
+n_components: 3
+kappa: 30.0
+seed: 42

@@ -21,17 +21,15 @@ class RSDE(RSDEBase):
 class Langevin(SDE):
     """Construct Langevin dynamics on a manifold"""
 
-    def __init__(
-        self,
-        beta_schedule,
-        manifold,
-        ref_scale=0.5,
-        ref_mean=None,
-        N=100,
-    ):
+    def __init__(self, beta_schedule, manifold, ref_scale=0.5, ref_mean=None, N=100):
         super().__init__(beta_schedule)
         self.manifold = manifold
-        self.limiting = WrapNormDistribution(manifold, scale=ref_scale, mean=ref_mean)
+        # Use sphere-specific implementation if available
+        if hasattr(manifold, 'dim') and hasattr(manifold, 'random_uniform'):
+            from riemannian_score_sde.models.distribution import WrapNormDistributionSphere
+            self.limiting = WrapNormDistributionSphere(manifold, scale=ref_scale, mean=ref_mean)
+        else:
+            self.limiting = WrapNormDistribution(manifold, scale=ref_scale, mean=ref_mean)
         self.N = N
 
     def drift(self, x, t):
@@ -74,6 +72,11 @@ class Langevin(SDE):
 
     def reverse(self, score_fn):
         return RSDE(self, score_fn)
+
+    def grad_marginal_log_prob(self, x0, x, t, **kwargs):
+        s = self.beta_schedule.rescale_t(t)
+        logp_grad = self.manifold.grad_marginal_log_prob(x0, x, s, **kwargs)
+        return None, logp_grad
 
 
 class VPSDE(Langevin):

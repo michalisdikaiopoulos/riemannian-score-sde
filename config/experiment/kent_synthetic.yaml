@@ -1,0 +1,11 @@
+# @package _global_
+
+# to execute this experiment run:
+# python main.py experiment=kent
+
+name: kent
+experiment: kent
+
+defaults:
+  - earth_data
+  - /dataset: kent_synthetic
