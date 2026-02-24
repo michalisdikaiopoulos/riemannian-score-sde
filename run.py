@@ -151,7 +151,6 @@ def run(cfg):
         rng = jax.random.PRNGKey(cfg.seed)
         dataset = eval_ds if stage == "eval" else test_ds
 
-        ## p_0 (backward)
         M = 32 if isinstance(pushforward, SDEPushForward) else 8
         model_w_dicts = (model, train_state.params_ema, train_state.model_state)
         sampler_kwargs = dict(N=100, eps=cfg.eps, predictor="GRW")
@@ -164,29 +163,47 @@ def run(cfg):
         prop_in_M = data_manifold.belongs(x, atol=1e-4).mean()
         log.info(f"Prop samples in M = {100 * prop_in_M.item():.1f}%")
 
-        # samples from model
+        # --- samples from model (original plot, no vectors) ---
         likelihood_fn = pushforward.get_log_prob(model_w_dicts, train=False)
         log_prob = jax.jit(lambda x: likelihood_fn(x)[0])
         plt = plot(data_manifold, None, x, log_prob=log_prob)
-        logger.log_plot(f"x0_bwd", plt, step)
+        logger.log_plot("x0_bwd", plt, step)
 
-        # samples from data
+        # --- vector field on uniform grid ---
+        rng, next_rng = jax.random.split(rng)
+        n_grid = 500
+        grid_points = jnp.array(data_manifold.random_uniform(state=rng, n_samples=n_grid))
+        t_array = jnp.full((n_grid, 1), cfg.eps)
+        vectors, _ = model.apply(
+            train_state.params_ema,
+            train_state.model_state,
+            next_rng,
+            y=grid_points,
+            t=t_array,
+            context=None,
+        )
+        vectors = np.array(vectors)
+        grid_points = np.array(grid_points)
+        fig = plot(data_manifold, None, None, log_prob=None, vectors=vectors, vector_origins=grid_points)
+        logger.log_plot("vector_field", fig, step)
+
+        # --- samples from data (only at step 0) ---
         if step <= 0:
             dataset.batch_dims = shape[0]
             x0 = next(dataset)[0]
-            log_prob = dataset.log_prob if hasattr(dataset, "log_prob") else None
-            plt = plot(data_manifold, None, x0, log_prob=log_prob)
-            logger.log_plot(f"x0", plt, step)
+            log_prob_data = dataset.log_prob if hasattr(dataset, "log_prob") else None
+            plt = plot(data_manifold, None, x0, log_prob=log_prob_data)
+            logger.log_plot("x0", plt, step)
             dataset.batch_dims = cfg.batch_size
 
-        ## p_T (forward)
+        # --- forward process (only at step 0) ---
         if step <= 0 and isinstance(pushforward, SDEPushForward):
             sampler = pushforward.get_sampler(
                 model_w_dicts, train=False, reverse=False, **sampler_kwargs
             )
             zT = sampler(rng, None, context, z=transform.inv(x0))
             plt = plot_ref(model_manifold, transform.inv(zT), log_prob=base.log_prob)
-            logger.log_plot(f"xT_fwd", plt, step)
+            logger.log_plot("xT_fwd", plt, step)
 
     ### Main
     log.info("Stage : Startup")
