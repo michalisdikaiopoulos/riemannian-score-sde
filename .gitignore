@@ -147,3 +147,5 @@ geomstats/
 experiment_commands.txt
 
 transfer_host_commands.txt
+
+riemannian_score_sde/visualisations/plots/

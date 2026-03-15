@@ -1,39 +1,33 @@
-import math
 import importlib
-from functools import partial
 
-import matplotlib.animation as animation
-import matplotlib.pyplot as plt
+import geomstats.backend as gs
+import geomstats.visualization as visualization
+import jax
+import math
 import matplotlib.colors as mcolors
-from matplotlib.patches import Circle
+import matplotlib.pyplot as plt
+import numpy as np
+from geomstats.geometry.euclidean import Euclidean
+from geomstats.geometry.hyperbolic import Hyperbolic, PoincareBall, Hyperboloid
+from geomstats.geometry.hypersphere import Hypersphere
+from geomstats.geometry.product_manifold import ProductSameManifold
+from geomstats.geometry.special_orthogonal import (
+    _SpecialOrthogonalMatrices,
+    _SpecialOrthogonal3Vectors,
+)
+from jax import numpy as jnp
 from matplotlib.animation import FuncAnimation
-import seaborn as sns
+from matplotlib.patches import Circle
+from scipy.stats import norm
 
 # plt.rcParams["text.usetex"] = True
 # plt.rcParams["font.family"] = ["Computer Modern Roman"]
 # plt.rcParams.update({"font.size": 20})
 
-import geomstats.backend as gs
-import geomstats.visualization as visualization
-from geomstats.geometry.hypersphere import Hypersphere
-from geomstats.geometry.hyperbolic import Hyperbolic, PoincareBall, Hyperboloid
-from geomstats.geometry.euclidean import Euclidean
-from geomstats.geometry.special_orthogonal import (
-    _SpecialOrthogonalMatrices,
-    _SpecialOrthogonal3Vectors,
-)
-from geomstats.geometry.product_manifold import ProductSameManifold
-
-import jax
-from jax import numpy as jnp
-import numpy as np
-from scipy.stats import norm
-
 try:
     plt.switch_backend("MACOSX")
 except ImportError as error:
     plt.switch_backend("agg")
-import seaborn as sns
 import os
 from matplotlib import cm
 
@@ -736,11 +730,6 @@ def animate_sampling(pushforward, model, train_state, epoch, cfg,
         n_samples: Number of trajectories to visualize (default: 2)
         save_path: Directory to save animation
     """
-    import os
-    import matplotlib.pyplot as plt
-    from matplotlib.animation import FuncAnimation
-    from matplotlib import cm
-    import numpy as np
 
     os.makedirs(save_path, exist_ok=True)
 
@@ -813,7 +802,7 @@ def animate_sampling(pushforward, model, train_state, epoch, cfg,
         ax.clear()
 
         # ax.view_init(elev=20, azim=180)  # Rotate 180 degrees
-        ax.view_init(elev=0, azim=0)
+        ax.view_init(elev=0, azim=90)
 
         # Use density as color map
         facecolors = cm.hot(density)  # Hot colormap (dark to bright)
