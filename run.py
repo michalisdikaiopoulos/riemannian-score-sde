@@ -151,30 +151,24 @@ def run(cfg):
         rng = jax.random.PRNGKey(cfg.seed)
         dataset = eval_ds if stage == "eval" else test_ds
         
-        # Flag samples as unsafe
-        phi_min = -0.3
-        phi_max = 0.3
-
-        target_n = 30
-        unsafe_points_list = []
-
-        while True:
-            x0, _ = next(dataset)
-            phi = jnp.arctan2(x0[:, 1], x0[:, 0])
-            mask = (phi > phi_min) & (phi < phi_max)
-
-            selected = x0[mask]
-
-            if selected.shape[0] > 0:
-                unsafe_points_list.append(selected)
-
-            if len(unsafe_points_list) > 0:
-                unsafe_points = jnp.concatenate(unsafe_points_list, axis=0)
-                if unsafe_points.shape[0] >= target_n:
-                    unsafe_points = unsafe_points[:target_n]
-                    break
-
-        print(f"DEBUG: Created successfully {target_n} unsafe data points!")
+        # Collect unsafe reference points if safety guardrail is enabled
+        safety = cfg.safety
+        unsafe_points = None
+        if safety.enabled:
+            unsafe_points_list = []
+            while True:
+                x0, _ = next(dataset)
+                phi = jnp.arctan2(x0[:, 1], x0[:, 0])
+                mask = (phi > safety.phi_min) & (phi < safety.phi_max)
+                selected = x0[mask]
+                if selected.shape[0] > 0:
+                    unsafe_points_list.append(selected)
+                if len(unsafe_points_list) > 0:
+                    unsafe_points = jnp.concatenate(unsafe_points_list, axis=0)
+                    if unsafe_points.shape[0] >= safety.target_n:
+                        unsafe_points = unsafe_points[:safety.target_n]
+                        break
+            log.info(f"Safety guardrail enabled: collected {safety.target_n} unsafe points")
 
         M = 32 if isinstance(pushforward, SDEPushForward) else 8
         model_w_dicts = (model, train_state.params_ema, train_state.model_state)
@@ -183,6 +177,7 @@ def run(cfg):
             model_w_dicts,
             train=False,
             unsafe_points=unsafe_points,
+            safety_cfg=safety if safety.enabled else None,
             **sampler_kwargs)
 
         x0, context = next(dataset)

@@ -1,0 +1,14 @@
+enabled: false
+
+# Unsafe region definition (azimuthal wedge on S2)
+phi_min: -0.3
+phi_max: 0.3
+target_n: 30
+
+# Score correction
+eta: 1.5       # overall strength of the safety correction
+beta_max: 10.0 # hard cap on beta to prevent blow-up
+t_min: 0.5     # disable guardrail below this diffusion time
+
+# Heat kernel approximation
+n_max: 5       # number of terms in the series expansion

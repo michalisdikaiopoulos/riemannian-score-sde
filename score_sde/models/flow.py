@@ -73,17 +73,16 @@ def heat_kernel_log(y, unsafe_points, t, manifold, n_max=5):
     return log_p.reshape(B, N)
 
 
-def make_safe_score_fn(score_fn, unsafe_points, manifold, t_min=0.5):
+def make_safe_score_fn(score_fn, unsafe_points, manifold, eta=1.5, beta_max=10.0, t_min=0.5, n_max=5):
     metric = manifold.metric
     def safe_score_fn(y, t):
-        eta = 1.5
         score = score_fn(y, t)
 
         t_safe = jnp.clip(t, 1e-3, None)
         t_safe = t_safe.reshape(-1, 1)
 
         log_vecs = log_map_batch(y, unsafe_points, metric)
-        log_p = heat_kernel_log(y, unsafe_points, t_safe, manifold)
+        log_p = heat_kernel_log(y, unsafe_points, t_safe, manifold, n_max=n_max)
         log_p = log_p - jnp.max(log_p, axis=1, keepdims=True)
         weights = jnp.exp(log_p)
         weighted_sum = jnp.sum(weights[..., None] * log_vecs, axis=1)
@@ -96,7 +95,6 @@ def make_safe_score_fn(score_fn, unsafe_points, manifold, t_min=0.5):
 
         n = unsafe_points.shape[0]
         beta = eta * (1.0 / n) * sum_weights
-        beta_max = 10.0
         beta = jnp.clip(beta, 0.0, beta_max)
 
         safe_score = (1.0 + beta) * score - beta * unsafe_score
@@ -241,6 +239,7 @@ class SDEPushForward(PushForward):
             reverse=True,
             transform=True,
             unsafe_points=None,
+            safety_cfg=None,
             **kwargs
     ):
         if self.diffeq == "ode":  # via probability flow
@@ -253,12 +252,15 @@ class SDEPushForward(PushForward):
                 score_fn = partial(score_fn, context=context)
 
                 # Apply safety mechanism to learned score function
-                if unsafe_points is not None:
-                    print("DEBUG: We are applying safety mechanism in RSGM learned score")
+                if unsafe_points is not None and safety_cfg is not None:
                     score_fn = make_safe_score_fn(
                         score_fn,
                         unsafe_points,
-                        self.transform.domain
+                        self.transform.domain,
+                        eta=safety_cfg.eta,
+                        beta_max=safety_cfg.beta_max,
+                        t_min=safety_cfg.t_min,
+                        n_max=safety_cfg.n_max,
                     )
 
                 sde = self.sde.reverse(score_fn) if reverse else self.sde
