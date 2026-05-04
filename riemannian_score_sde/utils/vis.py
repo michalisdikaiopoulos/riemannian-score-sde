@@ -135,15 +135,15 @@ def get_spherical_grid(N, eps=0.0):
     return xs, lat, lon
 
 
-def plot_3d(x0, xt, size, prob=None, vectors=None, vector_origins=None):
+def plot_3d(x0, xt, size, prob=None, vectors=None, vector_origins=None, unsafe_points=None):
     fig = plt.figure(figsize=(size, size))
     ax = fig.add_subplot(111, projection="3d")
     ax = remove_background(ax)
     fig.subplots_adjust(left=-0.2, bottom=-0.2, right=1.2, top=1.2, wspace=0, hspace=0)
-    ax.view_init(elev=0, azim=0)
+    ax.view_init(elev=30, azim=45)
     cmap = sns.cubehelix_palette(as_cmap=True)
     sphere = visualization.Sphere()
-    sphere.draw(ax, color="red", marker=".")
+    sphere.draw(ax, color="lightgray", marker=".", alpha=0.15)
 
     if x0 is not None:
         cax = ax.scatter(x0[:, 0], x0[:, 1], x0[:, 2], s=50, color="green")
@@ -151,7 +151,7 @@ def plot_3d(x0, xt, size, prob=None, vectors=None, vector_origins=None):
     if xt is not None:
         x, y, z = xt[:, 0], xt[:, 1], xt[:, 2]
         c = prob(xt) if prob is not None else "blue"
-        cax = ax.scatter(x, y, z, s=50, vmin=0.0, vmax=2.0, c=c, cmap=cmap)
+        cax = ax.scatter(x, y, z, s=20, alpha=0.2, vmin=0.0, vmax=2.0, c=c, cmap=cmap)
         plt.colorbar(cax)
 
     if vectors is not None and vector_origins is not None:
@@ -168,6 +168,34 @@ def plot_3d(x0, xt, size, prob=None, vectors=None, vector_origins=None):
             colors=arrow_colors,
             arrow_length_ratio=0.35,
         )
+
+    if unsafe_points is not None:
+        unsafe_np = np.array(unsafe_points)
+        unsafe_np = unsafe_np * 1.1
+
+        mean_dir = unsafe_np.mean(axis=0)
+        mean_dir = mean_dir / np.linalg.norm(mean_dir)
+
+        azim = np.degrees(np.arctan2(mean_dir[1], mean_dir[0]))
+
+        ax.view_init(elev=30, azim=azim)
+
+        unsafe_np = np.array(unsafe_points)
+
+        ax.scatter(
+            unsafe_np[:, 0],
+            unsafe_np[:, 1],
+            unsafe_np[:, 2],
+            s=400,  # MUCH bigger
+            color="black",
+            marker="o",
+            edgecolors="yellow",  # strong contrast
+            linewidths=2,
+            zorder=10,
+            label="unsafe"
+        )
+
+        ax.legend()
 
     plt.close(fig)
     return fig
@@ -657,12 +685,12 @@ def plot_poincare(
     return fig
 
 
-def plot(manifold, x0, xt, log_prob=None, vectors=None, vector_origins=None, size=10):
+def plot(manifold, x0, xt, log_prob=None, vectors=None, vector_origins=None, unsafe_points=None, size=10):
     prob = None if log_prob is None else lambda x: jnp.exp(log_prob(x))
     if isinstance(manifold, Euclidean) and manifold.dim == 3:
         fig = plot_3d(x0, xt, size, prob=prob, vectors=vectors, vector_origins=vector_origins)
     elif isinstance(manifold, Hypersphere) and manifold.dim == 2:
-        fig = plot_3d(x0, xt, size, prob=prob, vectors=vectors, vector_origins=vector_origins)
+        fig = plot_3d(x0, xt, size, prob=prob, vectors=vectors, vector_origins=vector_origins, unsafe_points=unsafe_points)
     elif isinstance(manifold, _SpecialOrthogonalMatrices) and manifold.dim == 3:
         fig = plot_so3(x0, xt, size, prob=prob)
     elif (

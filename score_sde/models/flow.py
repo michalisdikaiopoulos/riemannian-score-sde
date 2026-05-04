@@ -41,6 +41,81 @@ def get_riemannian_div_fn(func, hutchinson_type: str = "None", manifold=None):
     return lambda y, t, context, eps: div_fn(y, t, context, eps) / sqrt_g(y)
 
 
+def log_map_batch(y, unsafe_points, metric):
+    B = y.shape[0]
+    N = unsafe_points.shape[0]
+
+    y_rep = jnp.repeat(y, N, axis=0)  # [B*N, 3]
+    unsafe_rep = jnp.tile(unsafe_points, (B, 1))  # [B*N, 3]
+
+    log_flat = metric.log(unsafe_rep, y_rep)
+
+    return log_flat.reshape(B, N, 3)
+
+
+def heat_kernel_log(y, unsafe_points, t, manifold, n_max=5):
+    B = y.shape[0]
+    N = unsafe_points.shape[0]
+
+    # Create all pairwise combinations
+    y_rep = jnp.repeat(y, N, axis=0)               # [B*N, 3]
+    unsafe_rep = jnp.tile(unsafe_points, (B, 1))   # [B*N, 3]
+
+    t_rep = jnp.repeat(t.reshape(-1), N)           # [B*N]
+
+    log_p = manifold._log_heat_kernel(
+        unsafe_rep,   # x0
+        y_rep,        # x
+        t_rep,
+        n_max=n_max
+    )
+
+    return log_p.reshape(B, N)
+
+
+def make_safe_score_fn(score_fn, unsafe_points, manifold, t_min=0.5):
+    metric = manifold.metric
+    def safe_score_fn(y, t):
+        eta = 1.5
+        score = score_fn(y, t)
+
+        t_safe = jnp.clip(t, 1e-3, None)
+        t_safe = t_safe.reshape(-1, 1)
+
+        log_vecs = log_map_batch(y, unsafe_points, metric)
+        log_p = heat_kernel_log(y, unsafe_points, t_safe, manifold)
+        log_p = log_p - jnp.max(log_p, axis=1, keepdims=True)
+        weights = jnp.exp(log_p)
+        weighted_sum = jnp.sum(weights[..., None] * log_vecs, axis=1)
+        sum_weights = jnp.sum(weights, axis=1, keepdims=True) + 1e-8
+        unsafe_score = (1.0 / t_safe) * (weighted_sum / sum_weights)
+
+        # score_norm = jnp.linalg.norm(score, axis=-1, keepdims=True) + 1e-8
+        # unsafe_norm = jnp.linalg.norm(unsafe_score, axis=-1, keepdims=True) + 1e-8
+        # unsafe_score = unsafe_score / unsafe_norm * score_norm
+
+        n = unsafe_points.shape[0]
+        beta = eta * (1.0 / n) * sum_weights
+        beta_max = 10.0
+        beta = jnp.clip(beta, 0.0, beta_max)
+
+        safe_score = (1.0 + beta) * score - beta * unsafe_score
+
+        # Diagnostics
+        # jax.debug.print("t_scalar: {}", jnp.mean(t))
+        # jax.debug.print("sum_weights mean: {}", jnp.mean(sum_weights))
+        # jax.debug.print("beta mean: {}", jnp.mean(beta))
+        # jax.debug.print("score norm mean: {}", jnp.mean(jnp.linalg.norm(score, axis=-1)))
+        # jax.debug.print("unsafe_score norm mean: {}", jnp.mean(jnp.linalg.norm(unsafe_score, axis=-1)))
+        # jax.debug.print("safe_score norm mean: {}", jnp.mean(jnp.linalg.norm(safe_score, axis=-1)))
+
+        # Disable guardrail for small t using jnp.where (JAX-compatible)
+        t_scalar = jnp.mean(t)
+        score = jnp.where(t_scalar < t_min, score, safe_score)
+        return score
+    return safe_score_fn
+
+
 def div_noise(
     rng: jax.Array, shape: Sequence[int], hutchinson_type: str
 ) -> jnp.ndarray:
@@ -160,7 +235,13 @@ class SDEPushForward(PushForward):
         super(SDEPushForward, self).__init__(flow, base, transform)
 
     def get_sampler(
-        self, model_w_dicts, train=False, reverse=True, transform=True, **kwargs
+            self,
+            model_w_dicts,
+            train=False,
+            reverse=True,
+            transform=True,
+            unsafe_points=None,
+            **kwargs
     ):
         if self.diffeq == "ode":  # via probability flow
             sample = super().get_sampler(model_w_dicts, train, reverse)
@@ -170,6 +251,16 @@ class SDEPushForward(PushForward):
                 z = self.base.sample(rng, shape) if z is None else z
                 score_fn = self.sde.reparametrise_score_fn(*model_w_dicts)
                 score_fn = partial(score_fn, context=context)
+
+                # Apply safety mechanism to learned score function
+                if unsafe_points is not None:
+                    print("DEBUG: We are applying safety mechanism in RSGM learned score")
+                    score_fn = make_safe_score_fn(
+                        score_fn,
+                        unsafe_points,
+                        self.transform.domain
+                    )
+
                 sde = self.sde.reverse(score_fn) if reverse else self.sde
                 sampler = get_pc_sampler(sde, **kwargs)
                 sampler = jax.jit(sampler)

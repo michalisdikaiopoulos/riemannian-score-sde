@@ -150,11 +150,40 @@ def run(cfg):
         log.info("Generating plots")
         rng = jax.random.PRNGKey(cfg.seed)
         dataset = eval_ds if stage == "eval" else test_ds
+        
+        # Flag samples as unsafe
+        phi_min = -0.3
+        phi_max = 0.3
+
+        target_n = 30
+        unsafe_points_list = []
+
+        while True:
+            x0, _ = next(dataset)
+            phi = jnp.arctan2(x0[:, 1], x0[:, 0])
+            mask = (phi > phi_min) & (phi < phi_max)
+
+            selected = x0[mask]
+
+            if selected.shape[0] > 0:
+                unsafe_points_list.append(selected)
+
+            if len(unsafe_points_list) > 0:
+                unsafe_points = jnp.concatenate(unsafe_points_list, axis=0)
+                if unsafe_points.shape[0] >= target_n:
+                    unsafe_points = unsafe_points[:target_n]
+                    break
+
+        print(f"DEBUG: Created successfully {target_n} unsafe data points!")
 
         M = 32 if isinstance(pushforward, SDEPushForward) else 8
         model_w_dicts = (model, train_state.params_ema, train_state.model_state)
         sampler_kwargs = dict(N=100, eps=cfg.eps, predictor="GRW")
-        sampler = pushforward.get_sampler(model_w_dicts, train=False, **sampler_kwargs)
+        sampler = pushforward.get_sampler(
+            model_w_dicts,
+            train=False,
+            unsafe_points=unsafe_points,
+            **sampler_kwargs)
 
         x0, context = next(dataset)
         shape = (int(cfg.batch_size * M),)
@@ -166,7 +195,7 @@ def run(cfg):
         # --- samples from model (original plot, no vectors) ---
         likelihood_fn = pushforward.get_log_prob(model_w_dicts, train=False)
         log_prob = jax.jit(lambda x: likelihood_fn(x)[0])
-        plt = plot(data_manifold, None, x, log_prob=log_prob)
+        plt = plot(data_manifold, None, x, log_prob=log_prob, unsafe_points=unsafe_points)
         logger.log_plot("x0_bwd", plt, step)
 
         # --- vector field on uniform grid ---
