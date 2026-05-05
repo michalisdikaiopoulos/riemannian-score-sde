@@ -187,6 +187,12 @@ def run(cfg):
         prop_in_M = data_manifold.belongs(x, atol=1e-4).mean()
         log.info(f"Prop samples in M = {100 * prop_in_M.item():.1f}%")
 
+        if safety.enabled:
+            phi = jnp.arctan2(x[:, 1], x[:, 0])
+            asr = jnp.mean((phi > safety.phi_min) & (phi < safety.phi_max)).item()
+            log.info(f"Proportion of generated samples in unsafe region [φ={safety.phi_min:.2f}, φ={safety.phi_max:.2f}] = {100 * asr:.2f}%")
+            logger.log_metrics({"safety/asr": asr}, step)
+
         # --- samples from model (original plot, no vectors) ---
         likelihood_fn = pushforward.get_log_prob(model_w_dicts, train=False)
         log_prob = jax.jit(lambda x: likelihood_fn(x)[0])
