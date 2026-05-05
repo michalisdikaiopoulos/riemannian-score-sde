@@ -190,7 +190,11 @@ def run(cfg):
         # --- samples from model (original plot, no vectors) ---
         likelihood_fn = pushforward.get_log_prob(model_w_dicts, train=False)
         log_prob = jax.jit(lambda x: likelihood_fn(x)[0])
-        plt = plot(data_manifold, None, x, log_prob=log_prob, unsafe_points=unsafe_points)
+        unsafe_label = (
+            f"unsafe (η={safety.eta}, t_min={safety.t_min})"
+            if safety.enabled else "unsafe"
+        )
+        plt = plot(data_manifold, None, x, log_prob=log_prob, unsafe_points=unsafe_points, unsafe_label=unsafe_label)
         logger.log_plot("x0_bwd", plt, step)
 
         # --- vector field on uniform grid ---

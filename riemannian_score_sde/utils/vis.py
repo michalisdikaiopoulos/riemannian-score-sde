@@ -135,7 +135,7 @@ def get_spherical_grid(N, eps=0.0):
     return xs, lat, lon
 
 
-def plot_3d(x0, xt, size, prob=None, vectors=None, vector_origins=None, unsafe_points=None):
+def plot_3d(x0, xt, size, prob=None, vectors=None, vector_origins=None, unsafe_points=None, unsafe_label="unsafe"):
     fig = plt.figure(figsize=(size, size))
     ax = fig.add_subplot(111, projection="3d")
     ax = remove_background(ax)
@@ -192,7 +192,7 @@ def plot_3d(x0, xt, size, prob=None, vectors=None, vector_origins=None, unsafe_p
             edgecolors="yellow",  # strong contrast
             linewidths=2,
             zorder=10,
-            label="unsafe"
+            label=unsafe_label
         )
 
         ax.legend()
@@ -685,12 +685,12 @@ def plot_poincare(
     return fig
 
 
-def plot(manifold, x0, xt, log_prob=None, vectors=None, vector_origins=None, unsafe_points=None, size=10):
+def plot(manifold, x0, xt, log_prob=None, vectors=None, vector_origins=None, unsafe_points=None, unsafe_label="unsafe", size=10):
     prob = None if log_prob is None else lambda x: jnp.exp(log_prob(x))
     if isinstance(manifold, Euclidean) and manifold.dim == 3:
         fig = plot_3d(x0, xt, size, prob=prob, vectors=vectors, vector_origins=vector_origins)
     elif isinstance(manifold, Hypersphere) and manifold.dim == 2:
-        fig = plot_3d(x0, xt, size, prob=prob, vectors=vectors, vector_origins=vector_origins, unsafe_points=unsafe_points)
+        fig = plot_3d(x0, xt, size, prob=prob, vectors=vectors, vector_origins=vector_origins, unsafe_points=unsafe_points, unsafe_label=unsafe_label)
     elif isinstance(manifold, _SpecialOrthogonalMatrices) and manifold.dim == 3:
         fig = plot_so3(x0, xt, size, prob=prob)
     elif (
