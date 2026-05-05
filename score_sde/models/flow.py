@@ -50,7 +50,7 @@ def log_map_batch(y, unsafe_points, metric):
 
     log_flat = metric.log(unsafe_rep, y_rep)
 
-    return log_flat.reshape(B, N, 3)
+    return log_flat.reshape(B, N, -1)
 
 
 def heat_kernel_log(y, unsafe_points, t, manifold, n_max=5):
