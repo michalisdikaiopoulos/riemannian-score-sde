@@ -68,6 +68,7 @@ def run(cfg):
                 if cfg.train_plot:
                     generate_plots(train_state, "val", step=step)
 
+                if cfg.train_animate:
                     volcano_data = []
                     for batch in eval_ds:
                         volcano_data.append(batch[0])
@@ -86,14 +87,14 @@ def run(cfg):
 
         logger.log_metrics({"train/total_time": total_train_time}, step)
 
-        if cfg.train_plot:
+        if cfg.train_animate:
             print(f"Generating final animation at step {cfg.steps}...")
             volcano_data, _ = next(eval_ds)
             animate_sampling(
                 pushforward=pushforward,
                 model=model,
                 train_state=train_state,
-                epoch=cfg.steps,  # Use cfg.steps (50000)
+                epoch=cfg.steps,
                 cfg=cfg,
                 volcano_data=volcano_data,
                 save_path=os.path.join(run_path, 'animations')

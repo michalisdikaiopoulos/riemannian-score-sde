@@ -36,6 +36,7 @@ logdir: ${work_dir}/results
 # perform actions in the val loop during training
 train_val: true
 train_plot: true
+train_animate: false
 
 # perform certain metrics in test mode
 test_val: true
