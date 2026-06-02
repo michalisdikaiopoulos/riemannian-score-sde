@@ -5,10 +5,20 @@ phi_min: -0.3
 phi_max: 0.3
 target_n: 30
 
+# Safety method: "spectral", "varadhan" (modifies score fn) or "noise_rejection" (accept-reject at t=T)
+method: spectral
+rejection_radius: 0.5  # geodesic radius (radians) for noise rejection
+
 # Score correction
-eta: 1.5       # overall strength of the safety correction
+eta: 5       # overall strength of the safety correction
 beta_max: 10.0 # hard cap on beta to prevent blow-up
 t_min: 0.5     # disable guardrail below this diffusion time
 
 # Heat kernel approximation
 n_max: 5       # number of terms in the series expansion
+
+# Delay method params ---
+r_threshold: 0.1          # distance to unsafe region (activation radius)
+repulsion_strength: 3.0   # how strong the push is
+delay_factor: 0.5         # how much to slow time (0 = none, 1 = freeze)
+t_delay: 0.3              # only apply delay below this t

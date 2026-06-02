@@ -153,6 +153,8 @@ class NoneCorrector(Corrector):
 
 def get_pc_sampler(
     sde: SDE,
+    unsafe_points,
+    safety_cfg,
     N: int,
     predictor: Predictor = "EulerMaruyamaPredictor",
     corrector: Corrector = None,

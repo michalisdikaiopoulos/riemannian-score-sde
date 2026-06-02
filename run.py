@@ -173,12 +173,26 @@ def run(cfg):
 
         M = 32 if isinstance(pushforward, SDEPushForward) else 8
         model_w_dicts = (model, train_state.params_ema, train_state.model_state)
-        sampler_kwargs = dict(N=100, eps=cfg.eps, predictor="GRW")
+        sampler_kwargs = dict(
+            N=100,
+            eps=cfg.eps,
+            predictor="GRW",
+        )
+
+        # Naive noise rejection: forward-diffuse unsafe points to noise space once
+        method = getattr(safety, 'method', 'spectral')
+        noised_unsafe_points = None
+        if safety.enabled and unsafe_points is not None and method == 'noise_rejection':
+            rng, fwd_rng = jax.random.split(rng)
+            noised_unsafe_points = pushforward.sde.marginal_sample(fwd_rng, unsafe_points, t=pushforward.sde.tf)
+            log.info(f"Forward diffused {unsafe_points.shape[0]} unsafe points to t={pushforward.sde.tf:.2f} (noise space)")
+
         sampler = pushforward.get_sampler(
             model_w_dicts,
             train=False,
-            unsafe_points=unsafe_points,
+            unsafe_points=unsafe_points if method in ['spectral', 'varadhan', 'delay'] else None,
             safety_cfg=safety if safety.enabled else None,
+            noised_unsafe_points=noised_unsafe_points,
             **sampler_kwargs)
 
         x0, context = next(dataset)

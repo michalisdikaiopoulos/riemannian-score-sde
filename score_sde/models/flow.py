@@ -73,7 +73,31 @@ def heat_kernel_log(y, unsafe_points, t, manifold, n_max=5):
     return log_p.reshape(B, N)
 
 
-def make_safe_score_fn(score_fn, unsafe_points, manifold, eta=1.5, beta_max=10.0, t_min=0.5, n_max=5):
+def sample_safe_noise(rng, shape, base_sample_fn, noised_unsafe, radius):
+    """Accept-reject: resample any initial noise within geodesic radius of noised_unsafe points."""
+    def min_dist(z_single):
+        dots = jnp.clip(z_single @ noised_unsafe.T, -1.0, 1.0)
+        return jnp.min(jnp.arccos(dots))
+
+    def cond_fn(state):
+        _, z = state
+        return jnp.any(jax.vmap(min_dist)(z) < radius)
+
+    def body_fn(state):
+        rng, z = state
+        rng, sub = jax.random.split(rng)
+        candidates = base_sample_fn(sub, shape)
+        unsafe = jax.vmap(min_dist)(z) < radius
+        z = jnp.where(unsafe[:, None], candidates, z)
+        return (rng, z)
+
+    rng, sub = jax.random.split(rng)
+    z = base_sample_fn(sub, shape)
+    _, z = jax.lax.while_loop(cond_fn, body_fn, (rng, z))
+    return z
+
+
+def make_safe_score_fn_spectral(score_fn, unsafe_points, manifold, eta=1.5, beta_max=10.0, t_min=0.5, n_max=5):
     metric = manifold.metric
     def safe_score_fn(y, t):
         score = score_fn(y, t)
@@ -87,7 +111,7 @@ def make_safe_score_fn(score_fn, unsafe_points, manifold, eta=1.5, beta_max=10.0
         weights = jnp.exp(log_p)
         weighted_sum = jnp.sum(weights[..., None] * log_vecs, axis=1)
         sum_weights = jnp.sum(weights, axis=1, keepdims=True) + 1e-8
-        unsafe_score = (1.0 / t_safe) * (weighted_sum / sum_weights)
+        unsafe_score =(weighted_sum / sum_weights)
 
         # score_norm = jnp.linalg.norm(score, axis=-1, keepdims=True) + 1e-8
         # unsafe_norm = jnp.linalg.norm(unsafe_score, axis=-1, keepdims=True) + 1e-8
@@ -98,6 +122,15 @@ def make_safe_score_fn(score_fn, unsafe_points, manifold, eta=1.5, beta_max=10.0
         beta = jnp.clip(beta, 0.0, beta_max)
 
         safe_score = (1.0 + beta) * score - beta * unsafe_score
+
+        jax.debug.print(
+            "t: {t}, unsafe_norm: {u}, score_norm: {s}, beta: {b}, t_min: {t_min}",
+            t=jnp.mean(t),
+            u=jnp.mean(jnp.linalg.norm(unsafe_score, axis=-1)),
+            s=jnp.mean(jnp.linalg.norm(score, axis=-1)),
+            b=jnp.mean(beta),
+            t_min=jnp.mean(t_min),
+        )
 
         # Diagnostics
         # jax.debug.print("t_scalar: {}", jnp.mean(t))
@@ -111,6 +144,52 @@ def make_safe_score_fn(score_fn, unsafe_points, manifold, eta=1.5, beta_max=10.0
         t_scalar = jnp.mean(t)
         score = jnp.where(t_scalar < t_min, score, safe_score)
         return score
+    return safe_score_fn
+
+def make_safe_score_fn_varadhan(score_fn, unsafe_points, manifold, eta, beta_max):
+    print("---- Varadhan safety method used! ----")
+    metric = manifold.metric
+
+    def safe_score_fn(y, t):
+        score = score_fn(y, t)
+
+        # --- time ---
+        t_safe = jnp.clip(t, 1e-3, None).reshape(-1, 1)
+
+        # --- log map ---
+        log_vecs = log_map_batch(y, unsafe_points, metric)
+
+        # --- Varadhan kernel ---
+        dist_sq = jnp.sum(log_vecs**2, axis=-1)
+        log_p = -dist_sq / (2 * t_safe)
+
+        # --- stabilize ---
+        log_p = log_p - jnp.max(log_p, axis=1, keepdims=True)
+        weights = jnp.exp(log_p)
+
+        # --- weighted sum ---
+        weighted_sum = jnp.sum(weights[..., None] * log_vecs, axis=1)
+        sum_weights = jnp.sum(weights, axis=1, keepdims=True) + 1e-8
+
+        # --- unsafe score ---
+        unsafe_score = (1.0 / t_safe) * (weighted_sum / sum_weights)
+
+        # --- beta ---
+        n = unsafe_points.shape[0]
+        beta = eta * (1.0 / n) * sum_weights
+        beta = jnp.clip(beta, 0.0, beta_max)
+
+        t_threshold = 0.2
+
+        # --- final correction ---
+        safe_score = (1.0 + beta) * score - beta * unsafe_score
+
+        alpha = jnp.clip((t_threshold - t_safe) / t_threshold, 0.0, 1.0)
+
+        score = (1.0 - alpha) * score + alpha * safe_score
+
+        return score
+
     return safe_score_fn
 
 
@@ -240,6 +319,7 @@ class SDEPushForward(PushForward):
             transform=True,
             unsafe_points=None,
             safety_cfg=None,
+            noised_unsafe_points=None,
             **kwargs
     ):
         if self.diffeq == "ode":  # via probability flow
@@ -247,24 +327,42 @@ class SDEPushForward(PushForward):
         elif self.diffeq == "sde":  # via stochastic process
 
             def sample(rng, shape, context, z=None):
-                z = self.base.sample(rng, shape) if z is None else z
+                if z is None:
+                    if noised_unsafe_points is not None and safety_cfg is not None:
+                        # Naive noise rejection: avoid neighborhoods of forward-diffused unsafe points
+                        radius = getattr(safety_cfg, 'rejection_radius', 0.5)
+                        rng, sub = jax.random.split(rng)
+                        z = sample_safe_noise(sub, shape, self.base.sample, noised_unsafe_points, radius)
+                    else:
+                        z = self.base.sample(rng, shape)
+
                 score_fn = self.sde.reparametrise_score_fn(*model_w_dicts)
                 score_fn = partial(score_fn, context=context)
 
-                # Apply safety mechanism to learned score function
+                # Apply score-correction safety mechanism
                 if unsafe_points is not None and safety_cfg is not None:
-                    score_fn = make_safe_score_fn(
-                        score_fn,
-                        unsafe_points,
-                        self.transform.domain,
-                        eta=safety_cfg.eta,
-                        beta_max=safety_cfg.beta_max,
-                        t_min=safety_cfg.t_min,
-                        n_max=safety_cfg.n_max,
-                    )
+                    if safety_cfg.method == "spectral":
+                        score_fn = make_safe_score_fn_spectral(
+                            score_fn,
+                            unsafe_points,
+                            self.transform.domain,
+                            eta=safety_cfg.eta,
+                            beta_max=safety_cfg.beta_max,
+                            t_min=safety_cfg.t_min,
+                            n_max=safety_cfg.n_max,
+                        )
+
+                    elif safety_cfg.method == "varadhan":
+                        score_fn = make_safe_score_fn_varadhan(
+                            score_fn,
+                            unsafe_points,
+                            self.transform.domain,
+                            eta=safety_cfg.eta,
+                            beta_max=safety_cfg.beta_max,
+                        )
 
                 sde = self.sde.reverse(score_fn) if reverse else self.sde
-                sampler = get_pc_sampler(sde, **kwargs)
+                sampler = get_pc_sampler(sde, unsafe_points=unsafe_points, safety_cfg=safety_cfg, **kwargs)
                 sampler = jax.jit(sampler)
                 y = sampler(rng, z)
                 x = self.transform(y) if transform else y

@@ -48,7 +48,7 @@ class Langevin(SDE):
         out = self.manifold.random_walk(rng, x, self.beta_schedule.rescale_t(t))
         if return_hist or out is None:
             sampler = get_pc_sampler(
-                self, self.N, predictor="GRW", return_hist=return_hist
+                self, None, None, self.N, predictor="GRW", return_hist=return_hist
             )
             out = sampler(rng, x, tf=t)
         return out
