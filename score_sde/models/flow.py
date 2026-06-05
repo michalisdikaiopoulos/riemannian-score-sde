@@ -146,6 +146,49 @@ def make_safe_score_fn_spectral(score_fn, unsafe_points, manifold, eta=1.5, beta
         return score
     return safe_score_fn
 
+def make_safe_score_fn_barrier(score_fn, phi_min, phi_max, eta=10.0, t_barrier=0.3):
+    """Barrier correction: when t < t_barrier and a sample is inside the unsafe
+    azimuthal wedge [phi_min, phi_max], apply a strong outward push in the score.
+
+    The push direction is tangent to S² in the phi direction, pointing toward the
+    nearest boundary. Strength scales as eta/t so the correction dominates near t=0.
+    """
+    def safe_score_fn(y, t):
+        score = score_fn(y, t)
+        t_scalar = jnp.mean(t)
+
+        phi = jnp.arctan2(y[:, 1], y[:, 0])
+        inside = (phi >= phi_min) & (phi <= phi_max)
+
+        dist_to_min = phi - phi_min   # > 0 inside
+        dist_to_max = phi_max - phi   # > 0 inside
+
+        # Tangent direction of increasing phi at y: (-y2, y1, 0) / norm_xy
+        norm_xy = jnp.sqrt(y[:, 0] ** 2 + y[:, 1] ** 2) + 1e-8
+        dphi = jnp.stack([-y[:, 1], y[:, 0], jnp.zeros(y.shape[0])], axis=-1) / norm_xy[:, None]
+
+        # Push through the nearest boundary
+        sign = jnp.where(dist_to_min < dist_to_max, -1.0, 1.0)
+        outward = sign[:, None] * dphi
+
+        t_clipped = jnp.clip(t_scalar, 1e-3, None)
+        barrier_correction = (eta / t_clipped) * outward
+
+        correction = jnp.where(inside[:, None], barrier_correction, jnp.zeros_like(score))
+        correction = jnp.where(t_scalar < t_barrier, correction, jnp.zeros_like(score))
+
+        jax.debug.print(
+            "t: {t:.3f}, inside_frac: {f:.2f}, active: {a}",
+            t=t_scalar,
+            f=jnp.mean(inside.astype(jnp.float32)),
+            a=(t_scalar < t_barrier),
+        )
+
+        return score + correction
+
+    return safe_score_fn
+
+
 def make_safe_score_fn_varadhan(score_fn, unsafe_points, manifold, eta, beta_max):
     print("---- Varadhan safety method used! ----")
     metric = manifold.metric
@@ -340,8 +383,8 @@ class SDEPushForward(PushForward):
                 score_fn = partial(score_fn, context=context)
 
                 # Apply score-correction safety mechanism
-                if unsafe_points is not None and safety_cfg is not None:
-                    if safety_cfg.method == "spectral":
+                if safety_cfg is not None:
+                    if safety_cfg.method == "spectral" and unsafe_points is not None:
                         score_fn = make_safe_score_fn_spectral(
                             score_fn,
                             unsafe_points,
@@ -352,13 +395,22 @@ class SDEPushForward(PushForward):
                             n_max=safety_cfg.n_max,
                         )
 
-                    elif safety_cfg.method == "varadhan":
+                    elif safety_cfg.method == "varadhan" and unsafe_points is not None:
                         score_fn = make_safe_score_fn_varadhan(
                             score_fn,
                             unsafe_points,
                             self.transform.domain,
                             eta=safety_cfg.eta,
                             beta_max=safety_cfg.beta_max,
+                        )
+
+                    elif safety_cfg.method == "barrier":
+                        score_fn = make_safe_score_fn_barrier(
+                            score_fn,
+                            phi_min=safety_cfg.phi_min,
+                            phi_max=safety_cfg.phi_max,
+                            eta=safety_cfg.eta,
+                            t_barrier=safety_cfg.t_barrier,
                         )
 
                 sde = self.sde.reverse(score_fn) if reverse else self.sde

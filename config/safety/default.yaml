@@ -12,7 +12,8 @@ rejection_radius: 0.5  # geodesic radius (radians) for noise rejection
 # Score correction
 eta: 5       # overall strength of the safety correction
 beta_max: 10.0 # hard cap on beta to prevent blow-up
-t_min: 0.5     # disable guardrail below this diffusion time
+t_min: 0.5     # disable guardrail below this diffusion time (spectral/varadhan)
+t_barrier: 0.3 # activate barrier below this diffusion time (barrier method)
 
 # Heat kernel approximation
 n_max: 5       # number of terms in the series expansion
