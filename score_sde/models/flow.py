@@ -113,15 +113,22 @@ def make_safe_score_fn_spectral(score_fn, unsafe_points, manifold, eta=1.5, beta
         sum_weights = jnp.sum(weights, axis=1, keepdims=True) + 1e-8
         unsafe_score =(weighted_sum / sum_weights)
 
-        # score_norm = jnp.linalg.norm(score, axis=-1, keepdims=True) + 1e-8
-        # unsafe_norm = jnp.linalg.norm(unsafe_score, axis=-1, keepdims=True) + 1e-8
-        # unsafe_score = unsafe_score / unsafe_norm * score_norm
+        score_norm = jnp.linalg.norm(score, axis=-1, keepdims=True) + 1e-8
+        unsafe_norm = jnp.linalg.norm(unsafe_score, axis=-1, keepdims=True) + 1e-8
+        unsafe_score = unsafe_score / unsafe_norm * score_norm
 
         n = unsafe_points.shape[0]
         beta = eta * (1.0 / n) * sum_weights
         beta = jnp.clip(beta, 0.0, beta_max)
 
+        # # Normalize sum_weights to [0, 1] range
+        # beta = eta * jnp.sigmoid(sum_weights - n)  # centered around n unsafe points
+        # beta = jnp.clip(beta, 0.0, beta_max)
+
         safe_score = (1.0 + beta) * score - beta * unsafe_score
+
+        safe_score_norm = jnp.linalg.norm(safe_score, axis=-1, keepdims=True) + 1e-8
+        safe_score = safe_score / safe_score_norm * score_norm
 
         jax.debug.print(
             "t: {t}, unsafe_norm: {u}, score_norm: {s}, beta: {b}, t_min: {t_min}",
@@ -131,14 +138,6 @@ def make_safe_score_fn_spectral(score_fn, unsafe_points, manifold, eta=1.5, beta
             b=jnp.mean(beta),
             t_min=jnp.mean(t_min),
         )
-
-        # Diagnostics
-        # jax.debug.print("t_scalar: {}", jnp.mean(t))
-        # jax.debug.print("sum_weights mean: {}", jnp.mean(sum_weights))
-        # jax.debug.print("beta mean: {}", jnp.mean(beta))
-        # jax.debug.print("score norm mean: {}", jnp.mean(jnp.linalg.norm(score, axis=-1)))
-        # jax.debug.print("unsafe_score norm mean: {}", jnp.mean(jnp.linalg.norm(unsafe_score, axis=-1)))
-        # jax.debug.print("safe_score norm mean: {}", jnp.mean(jnp.linalg.norm(safe_score, axis=-1)))
 
         # Disable guardrail for small t using jnp.where (JAX-compatible)
         t_scalar = jnp.mean(t)
@@ -217,21 +216,24 @@ def make_safe_score_fn_varadhan(score_fn, unsafe_points, manifold, eta, beta_max
         # --- unsafe score ---
         unsafe_score = (1.0 / t_safe) * (weighted_sum / sum_weights)
 
+        # --- magnitude matching: rescale unsafe_score to learned score's norm ---
+        score_norm = jnp.linalg.norm(score, axis=-1, keepdims=True) + 1e-8
+        unsafe_norm = jnp.linalg.norm(unsafe_score, axis=-1, keepdims=True) + 1e-8
+        unsafe_score = unsafe_score / unsafe_norm * score_norm
+
         # --- beta ---
         n = unsafe_points.shape[0]
         beta = eta * (1.0 / n) * sum_weights
         beta = jnp.clip(beta, 0.0, beta_max)
 
-        t_threshold = 0.2
-
         # --- final correction ---
         safe_score = (1.0 + beta) * score - beta * unsafe_score
 
-        alpha = jnp.clip((t_threshold - t_safe) / t_threshold, 0.0, 1.0)
+        # --- rescale safe_score back to learned score's norm ---
+        safe_score_norm = jnp.linalg.norm(safe_score, axis=-1, keepdims=True) + 1e-8
+        safe_score = safe_score / safe_score_norm * score_norm
 
-        score = (1.0 - alpha) * score + alpha * safe_score
-
-        return score
+        return safe_score
 
     return safe_score_fn
 
