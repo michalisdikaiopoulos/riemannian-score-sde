@@ -134,6 +134,7 @@ dmypy.json
 
 results/
 images/
+plots/
 data/abdb/
 data/sabdab/
 scripts/**/*.png
@@ -149,3 +150,5 @@ experiment_commands.txt
 transfer_host_commands.txt
 
 riemannian_score_sde/visualisations/plots/
+
+.DS_Store
