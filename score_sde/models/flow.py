@@ -16,6 +16,17 @@ from score_sde.ode import odeint
 from score_sde.sampling import get_pc_sampler
 
 
+# --- Score logging (populated during reverse diffusion) ---
+_score_log = []
+
+def clear_score_log():
+    global _score_log
+    _score_log = []
+
+def get_score_log():
+    return list(_score_log)
+
+
 def get_div_fn(drift_fn, hutchinson_type: str = "None"):
     """Euclidean divergence of the drift function."""
     if hutchinson_type == "None":
@@ -111,38 +122,39 @@ def make_safe_score_fn_spectral(score_fn, unsafe_points, manifold, eta=1.5, beta
         weights = jnp.exp(log_p)
         weighted_sum = jnp.sum(weights[..., None] * log_vecs, axis=1)
         sum_weights = jnp.sum(weights, axis=1, keepdims=True) + 1e-8
-        unsafe_score =(weighted_sum / sum_weights)
-
-        score_norm = jnp.linalg.norm(score, axis=-1, keepdims=True) + 1e-8
-        unsafe_norm = jnp.linalg.norm(unsafe_score, axis=-1, keepdims=True) + 1e-8
-        unsafe_score = unsafe_score / unsafe_norm * score_norm
+        unsafe_score = weighted_sum / sum_weights
 
         n = unsafe_points.shape[0]
         beta = eta * (1.0 / n) * sum_weights
         beta = jnp.clip(beta, 0.0, beta_max)
 
-        # # Normalize sum_weights to [0, 1] range
-        # beta = eta * jnp.sigmoid(sum_weights - n)  # centered around n unsafe points
-        # beta = jnp.clip(beta, 0.0, beta_max)
+        correction = score - unsafe_score
 
-        safe_score = (1.0 + beta) * score - beta * unsafe_score
-
-        safe_score_norm = jnp.linalg.norm(safe_score, axis=-1, keepdims=True) + 1e-8
-        safe_score = safe_score / safe_score_norm * score_norm
-
-        jax.debug.print(
-            "t: {t}, unsafe_norm: {u}, score_norm: {s}, beta: {b}, t_min: {t_min}",
-            t=jnp.mean(t),
-            u=jnp.mean(jnp.linalg.norm(unsafe_score, axis=-1)),
-            s=jnp.mean(jnp.linalg.norm(score, axis=-1)),
-            b=jnp.mean(beta),
-            t_min=jnp.mean(t_min),
-        )
+        safe_score = score + beta * correction
 
         # Disable guardrail for small t using jnp.where (JAX-compatible)
         t_scalar = jnp.mean(t)
-        score = jnp.where(t_scalar < t_min, score, safe_score)
-        return score
+        out = jnp.where(t_scalar < t_min, score, safe_score)
+
+        def _log(t_val, l, u, c, s):
+            _score_log.append({
+                "t":            float(t_val),
+                "|learned|":   float(l),
+                "|unsafe|":    float(u),
+                "|correction|": float(c),
+                "|safe|":      float(s),
+            })
+
+        jax.debug.callback(
+            _log,
+            t_scalar,
+            jnp.mean(jnp.linalg.norm(score,       axis=-1)),
+            jnp.mean(jnp.linalg.norm(unsafe_score, axis=-1)),
+            jnp.mean(jnp.linalg.norm(correction,   axis=-1)),
+            jnp.mean(jnp.linalg.norm(out,           axis=-1)),
+        )
+
+        return out
     return safe_score_fn
 
 def make_safe_score_fn_barrier(score_fn, phi_min, phi_max, eta=10.0, t_barrier=0.3):
@@ -234,6 +246,80 @@ def make_safe_score_fn_varadhan(score_fn, unsafe_points, manifold, eta, beta_max
         safe_score = safe_score / safe_score_norm * score_norm
 
         return safe_score
+
+    return safe_score_fn
+
+
+def make_safe_score_fn_experimental(score_fn, unsafe_points, manifold, eta, beta_max, t_min=0.0, t_max=1.0):
+    print(f"---- Experimental safety method used! t_min={t_min}  t_max={t_max} ----")
+    metric = manifold.metric
+
+    def safe_score_fn(y, t):
+        score = score_fn(y, t)
+
+        # --- time ---
+        t_safe = jnp.clip(t, 1e-3, None).reshape(-1, 1)
+
+        # --- log map ---
+        log_vecs = log_map_batch(y, unsafe_points, metric)
+
+        # --- kernel: spectral for t >= 0.5, Varadhan for t < 0.5 ---
+        dist_sq = jnp.sum(log_vecs**2, axis=-1)
+        log_p_varadhan = -dist_sq / (2 * t_safe)
+        log_p_spectral = heat_kernel_log(y, unsafe_points, t_safe, manifold)
+        use_spectral = (jnp.mean(t) >= 0.5)
+        log_p = jnp.where(use_spectral, log_p_spectral, log_p_varadhan)
+
+        # --- stabilize ---
+        log_p = log_p - jnp.max(log_p, axis=1, keepdims=True)
+        weights = jnp.exp(log_p)
+
+        # --- weighted sum ---
+        weighted_sum = jnp.sum(weights[..., None] * log_vecs, axis=1)
+        sum_weights = jnp.sum(weights, axis=1, keepdims=True) + 1e-8
+
+        # --- unsafe score ---
+        unsafe_score = weighted_sum / sum_weights
+
+        # --- scale unsafe score to learned score's magnitude ---
+        score_norm = jnp.linalg.norm(score, axis=-1, keepdims=True) + 1e-8
+        unsafe_norm = jnp.linalg.norm(unsafe_score, axis=-1, keepdims=True) + 1e-8
+        unsafe_score = unsafe_score / unsafe_norm * score_norm
+
+        # --- beta ---
+        n = unsafe_points.shape[0]
+        beta = eta * (1.0 / n) * sum_weights
+        beta = jnp.clip(beta, 0.0, beta_max)
+
+        # --- correction scaled to learned score's magnitude ---
+        correction = score - unsafe_score
+        correction_norm = jnp.linalg.norm(correction, axis=-1, keepdims=True) + 1e-8
+        correction = correction / correction_norm * score_norm
+
+        safe_score = score + beta * correction
+
+        t_scalar = jnp.mean(t)
+        out = jnp.where((t_scalar < t_min) | (t_scalar > t_max), score, safe_score)
+
+        def _log(t_val, l, u, c, s):
+            _score_log.append({
+                "t":             float(t_val),
+                "|learned|":    float(l),
+                "|unsafe|":     float(u),
+                "|correction|": float(c),
+                "|safe|":       float(s),
+            })
+
+        jax.debug.callback(
+            _log,
+            t_scalar,
+            jnp.mean(jnp.linalg.norm(score,        axis=-1)),
+            jnp.mean(jnp.linalg.norm(unsafe_score,  axis=-1)),
+            jnp.mean(jnp.linalg.norm(correction,    axis=-1)),
+            jnp.mean(jnp.linalg.norm(out,           axis=-1)),
+        )
+
+        return out
 
     return safe_score_fn
 
@@ -404,6 +490,17 @@ class SDEPushForward(PushForward):
                             self.transform.domain,
                             eta=safety_cfg.eta,
                             beta_max=safety_cfg.beta_max,
+                        )
+
+                    elif safety_cfg.method == "experimental" and unsafe_points is not None:
+                        score_fn = make_safe_score_fn_experimental(
+                            score_fn,
+                            unsafe_points,
+                            self.transform.domain,
+                            eta=safety_cfg.eta,
+                            beta_max=safety_cfg.beta_max,
+                            t_min=safety_cfg.t_min,
+                            t_max=safety_cfg.t_max,
                         )
 
                     elif safety_cfg.method == "barrier":

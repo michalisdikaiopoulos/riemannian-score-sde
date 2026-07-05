@@ -208,7 +208,7 @@ def run(cfg):
         sampler = pushforward.get_sampler(
             model_w_dicts,
             train=False,
-            unsafe_points=unsafe_points if method in ['spectral', 'varadhan', 'delay'] else None,
+            unsafe_points=unsafe_points if method in ['spectral', 'varadhan', 'experimental'] else None,
             safety_cfg=safety if safety.enabled else None,
             noised_unsafe_points=noised_unsafe_points,
             **sampler_kwargs)
