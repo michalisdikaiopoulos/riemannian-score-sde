@@ -25,6 +25,24 @@ from riemannian_score_sde.utils.vis import plot, plot_ref, animate_sampling
 log = logging.getLogger(__name__)
 
 
+def _compute_mmd(x_gen, x_real, n_subsample=2000):
+    x = np.array(x_gen[:n_subsample])
+    y = np.array(x_real[:n_subsample])
+
+    def geodesic_dists(a, b):
+        return np.arccos(np.clip(a @ b.T, -1.0, 1.0))
+
+    bw = float(np.median(geodesic_dists(x[:200], y[:200]).ravel()))
+    if bw < 1e-6:
+        bw = 1.0
+
+    def k(a, b):
+        return np.exp(-geodesic_dists(a, b) ** 2 / (2 * bw ** 2))
+
+    mmd2 = k(x, x).mean() - 2 * k(x, y).mean() + k(y, y).mean()
+    return float(np.sqrt(max(mmd2, 0.0)))
+
+
 def run(cfg):
     def train(train_state):
         loss = instantiate(
@@ -207,6 +225,21 @@ def run(cfg):
             asr = jnp.mean((phi > safety.phi_min) & (phi < safety.phi_max)).item()
             log.info(f"Proportion of generated samples in unsafe region [φ={safety.phi_min:.2f}, φ={safety.phi_max:.2f}] = {100 * asr:.2f}%")
             logger.log_metrics({"safety/asr": asr}, step)
+
+        # --- MMD between generated and real test samples ---
+        real_batches = []
+        n_real_target = 2000
+        while sum(b.shape[0] for b in real_batches) < n_real_target:
+            real_batches.append(np.array(next(dataset)[0]))
+        x_real = np.concatenate(real_batches, axis=0)
+        if safety.enabled:
+            phi_real = np.arctan2(x_real[:, 1], x_real[:, 0])
+            x_real = x_real[(phi_real <= safety.phi_min) | (phi_real >= safety.phi_max)]
+            log.info(f"MMD reference: {x_real.shape[0]} safe real samples")
+        x_for_mmd = np.array(x)
+        mmd = _compute_mmd(x_for_mmd, x_real)
+        log.info(f"{stage}/mmd = {mmd:.4f}")
+        logger.log_metrics({f"{stage}/mmd": mmd}, step)
 
         # --- samples from model (original plot, no vectors) ---
         likelihood_fn = pushforward.get_log_prob(model_w_dicts, train=False)
