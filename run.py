@@ -150,7 +150,7 @@ def run(cfg):
     def generate_plots(train_state, stage, step=None):
         log.info("Generating plots")
         rng = jax.random.PRNGKey(cfg.seed)
-        dataset = eval_ds if stage == "eval" else test_ds
+        dataset = eval_ds if stage == "val" else test_ds
         
         # Collect unsafe reference points if safety guardrail is enabled
         safety = cfg.safety
