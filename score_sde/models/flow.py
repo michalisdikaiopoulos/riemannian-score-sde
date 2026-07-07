@@ -108,7 +108,7 @@ def sample_safe_noise(rng, shape, base_sample_fn, noised_unsafe, radius):
     return z
 
 
-def make_safe_score_fn_spectral(score_fn, unsafe_points, manifold, eta=1.5, beta_max=10.0, t_min=0.5, n_max=5):
+def make_early_window_kernel_repulsion_score_fn(score_fn, unsafe_points, manifold, eta=1.5, beta_max=10.0, t_min=0.5, n_max=5):
     metric = manifold.metric
     def safe_score_fn(y, t):
         score = score_fn(y, t)
@@ -157,150 +157,44 @@ def make_safe_score_fn_spectral(score_fn, unsafe_points, manifold, eta=1.5, beta
         return out
     return safe_score_fn
 
-def make_safe_score_fn_barrier(score_fn, phi_min, phi_max, eta=10.0, t_barrier=0.3):
-    """Barrier correction: when t < t_barrier and a sample is inside the unsafe
-    azimuthal wedge [phi_min, phi_max], apply a strong outward push in the score.
-
-    The push direction is tangent to S² in the phi direction, pointing toward the
-    nearest boundary. Strength scales as eta/t so the correction dominates near t=0.
-    """
-    def safe_score_fn(y, t):
-        score = score_fn(y, t)
-        t_scalar = jnp.mean(t)
-
-        phi = jnp.arctan2(y[:, 1], y[:, 0])
-        inside = (phi >= phi_min) & (phi <= phi_max)
-
-        dist_to_min = phi - phi_min   # > 0 inside
-        dist_to_max = phi_max - phi   # > 0 inside
-
-        # Tangent direction of increasing phi at y: (-y2, y1, 0) / norm_xy
-        norm_xy = jnp.sqrt(y[:, 0] ** 2 + y[:, 1] ** 2) + 1e-8
-        dphi = jnp.stack([-y[:, 1], y[:, 0], jnp.zeros(y.shape[0])], axis=-1) / norm_xy[:, None]
-
-        # Push through the nearest boundary
-        sign = jnp.where(dist_to_min < dist_to_max, -1.0, 1.0)
-        outward = sign[:, None] * dphi
-
-        t_clipped = jnp.clip(t_scalar, 1e-3, None)
-        barrier_correction = (eta / t_clipped) * outward
-
-        correction = jnp.where(inside[:, None], barrier_correction, jnp.zeros_like(score))
-        correction = jnp.where(t_scalar < t_barrier, correction, jnp.zeros_like(score))
-
-        jax.debug.print(
-            "t: {t:.3f}, inside_frac: {f:.2f}, active: {a}",
-            t=t_scalar,
-            f=jnp.mean(inside.astype(jnp.float32)),
-            a=(t_scalar < t_barrier),
-        )
-
-        return score + correction
-
-    return safe_score_fn
-
-
-def make_safe_score_fn_varadhan(score_fn, unsafe_points, manifold, eta, beta_max):
-    print("---- Varadhan safety method used! ----")
+def make_full_window_scaled_kernel_repulsion_score_fn(score_fn, unsafe_points, manifold, eta, beta_max):
+    print("---- Experimental safety method used! (full window) ----")
     metric = manifold.metric
-
     def safe_score_fn(y, t):
         score = score_fn(y, t)
-
         # --- time ---
         t_safe = jnp.clip(t, 1e-3, None).reshape(-1, 1)
-
         # --- log map ---
         log_vecs = log_map_batch(y, unsafe_points, metric)
-
-        # --- Varadhan kernel ---
-        dist_sq = jnp.sum(log_vecs**2, axis=-1)
-        log_p = -dist_sq / (2 * t_safe)
-
-        # --- stabilize ---
-        log_p = log_p - jnp.max(log_p, axis=1, keepdims=True)
-        weights = jnp.exp(log_p)
-
-        # --- weighted sum ---
-        weighted_sum = jnp.sum(weights[..., None] * log_vecs, axis=1)
-        sum_weights = jnp.sum(weights, axis=1, keepdims=True) + 1e-8
-
-        # --- unsafe score ---
-        unsafe_score = (1.0 / t_safe) * (weighted_sum / sum_weights)
-
-        # --- magnitude matching: rescale unsafe_score to learned score's norm ---
-        score_norm = jnp.linalg.norm(score, axis=-1, keepdims=True) + 1e-8
-        unsafe_norm = jnp.linalg.norm(unsafe_score, axis=-1, keepdims=True) + 1e-8
-        unsafe_score = unsafe_score / unsafe_norm * score_norm
-
-        # --- beta ---
-        n = unsafe_points.shape[0]
-        beta = eta * (1.0 / n) * sum_weights
-        beta = jnp.clip(beta, 0.0, beta_max)
-
-        # --- final correction ---
-        safe_score = (1.0 + beta) * score - beta * unsafe_score
-
-        # --- rescale safe_score back to learned score's norm ---
-        safe_score_norm = jnp.linalg.norm(safe_score, axis=-1, keepdims=True) + 1e-8
-        safe_score = safe_score / safe_score_norm * score_norm
-
-        return safe_score
-
-    return safe_score_fn
-
-
-def make_safe_score_fn_experimental(score_fn, unsafe_points, manifold, eta, beta_max, t_min=0.0, t_max=1.0):
-    print(f"---- Experimental safety method used! t_min={t_min}  t_max={t_max} ----")
-    metric = manifold.metric
-
-    def safe_score_fn(y, t):
-        score = score_fn(y, t)
-
-        # --- time ---
-        t_safe = jnp.clip(t, 1e-3, None).reshape(-1, 1)
-
-        # --- log map ---
-        log_vecs = log_map_batch(y, unsafe_points, metric)
-
         # --- kernel: spectral for t >= 0.5, Varadhan for t < 0.5 ---
         dist_sq = jnp.sum(log_vecs**2, axis=-1)
         log_p_varadhan = -dist_sq / (2 * t_safe)
         log_p_spectral = heat_kernel_log(y, unsafe_points, t_safe, manifold)
         use_spectral = (jnp.mean(t) >= 0.5)
         log_p = jnp.where(use_spectral, log_p_spectral, log_p_varadhan)
-
         # --- stabilize ---
         log_p = log_p - jnp.max(log_p, axis=1, keepdims=True)
         weights = jnp.exp(log_p)
-
         # --- weighted sum ---
         weighted_sum = jnp.sum(weights[..., None] * log_vecs, axis=1)
         sum_weights = jnp.sum(weights, axis=1, keepdims=True) + 1e-8
-
         # --- unsafe score ---
         unsafe_score = weighted_sum / sum_weights
-
         # --- scale unsafe score to learned score's magnitude ---
         score_norm = jnp.linalg.norm(score, axis=-1, keepdims=True) + 1e-8
         unsafe_norm = jnp.linalg.norm(unsafe_score, axis=-1, keepdims=True) + 1e-8
         unsafe_score = unsafe_score / unsafe_norm * score_norm
-
         # --- beta ---
         n = unsafe_points.shape[0]
         beta = eta * (1.0 / n) * sum_weights
         beta = jnp.clip(beta, 0.0, beta_max)
-
         # --- correction scaled to learned score's magnitude ---
         correction = score - unsafe_score
         correction_norm = jnp.linalg.norm(correction, axis=-1, keepdims=True) + 1e-8
         correction = correction / correction_norm * score_norm
-
         safe_score = score + beta * correction
-
+        out = safe_score
         t_scalar = jnp.mean(t)
-        out = jnp.where((t_scalar < t_min) | (t_scalar > t_max), score, safe_score)
-
         def _log(t_val, l, u, c, s):
             _score_log.append({
                 "t":             float(t_val),
@@ -309,7 +203,6 @@ def make_safe_score_fn_experimental(score_fn, unsafe_points, manifold, eta, beta
                 "|correction|": float(c),
                 "|safe|":       float(s),
             })
-
         jax.debug.callback(
             _log,
             t_scalar,
@@ -318,11 +211,66 @@ def make_safe_score_fn_experimental(score_fn, unsafe_points, manifold, eta, beta
             jnp.mean(jnp.linalg.norm(correction,    axis=-1)),
             jnp.mean(jnp.linalg.norm(out,           axis=-1)),
         )
-
         return out
-
     return safe_score_fn
 
+def make_late_window_kernel_repulsion_score_fn(score_fn, unsafe_points, manifold, eta, beta_max, t_min=0.0, t_max=0.5):
+    print(f"---- Late-window kernel repulsion used! t_min={t_min}  t_max={t_max} ----")
+    metric = manifold.metric
+    def safe_score_fn(y, t):
+        score = score_fn(y, t)
+        # --- time ---
+        t_safe = jnp.clip(t, 1e-3, None).reshape(-1, 1)
+        # --- log map ---
+        log_vecs = log_map_batch(y, unsafe_points, metric)
+        # --- kernel: spectral for t >= 0.5, Varadhan for t < 0.5 ---
+        dist_sq = jnp.sum(log_vecs**2, axis=-1)
+        log_p_varadhan = -dist_sq / (2 * t_safe)
+        log_p_spectral = heat_kernel_log(y, unsafe_points, t_safe, manifold)
+        use_spectral = (jnp.mean(t) >= 0.5)
+        log_p = jnp.where(use_spectral, log_p_spectral, log_p_varadhan)
+        # --- stabilize ---
+        log_p = log_p - jnp.max(log_p, axis=1, keepdims=True)
+        weights = jnp.exp(log_p)
+        # --- weighted sum ---
+        weighted_sum = jnp.sum(weights[..., None] * log_vecs, axis=1)
+        sum_weights = jnp.sum(weights, axis=1, keepdims=True) + 1e-8
+        # --- unsafe score ---
+        unsafe_score = weighted_sum / sum_weights
+        # --- scale unsafe score to learned score's magnitude ---
+        score_norm = jnp.linalg.norm(score, axis=-1, keepdims=True) + 1e-8
+        unsafe_norm = jnp.linalg.norm(unsafe_score, axis=-1, keepdims=True) + 1e-8
+        unsafe_score = unsafe_score / unsafe_norm * score_norm
+        # --- beta ---
+        n = unsafe_points.shape[0]
+        beta = eta * (1.0 / n) * sum_weights
+        beta = jnp.clip(beta, 0.0, beta_max)
+        # --- correction scaled to learned score's magnitude ---
+        correction = score - unsafe_score
+        correction_norm = jnp.linalg.norm(correction, axis=-1, keepdims=True) + 1e-8
+        correction = correction / correction_norm * score_norm
+        safe_score = score + beta * correction
+        # --- late window: only active for t in [t_min, t_max], near-clean end of the trajectory ---
+        t_scalar = jnp.mean(t)
+        out = jnp.where((t_scalar < t_min) | (t_scalar > t_max), score, safe_score)
+        def _log(t_val, l, u, c, s):
+            _score_log.append({
+                "t":             float(t_val),
+                "|learned|":    float(l),
+                "|unsafe|":     float(u),
+                "|correction|": float(c),
+                "|safe|":       float(s),
+            })
+        jax.debug.callback(
+            _log,
+            t_scalar,
+            jnp.mean(jnp.linalg.norm(score,        axis=-1)),
+            jnp.mean(jnp.linalg.norm(unsafe_score,  axis=-1)),
+            jnp.mean(jnp.linalg.norm(correction,    axis=-1)),
+            jnp.mean(jnp.linalg.norm(out,           axis=-1)),
+        )
+        return out
+    return safe_score_fn
 
 def div_noise(
     rng: jax.Array, shape: Sequence[int], hutchinson_type: str
@@ -472,8 +420,8 @@ class SDEPushForward(PushForward):
 
                 # Apply score-correction safety mechanism
                 if safety_cfg is not None:
-                    if safety_cfg.method == "spectral" and unsafe_points is not None:
-                        score_fn = make_safe_score_fn_spectral(
+                    if safety_cfg.method == "early_window" and unsafe_points is not None:
+                        score_fn = make_early_window_kernel_repulsion_score_fn(
                             score_fn,
                             unsafe_points,
                             self.transform.domain,
@@ -483,8 +431,8 @@ class SDEPushForward(PushForward):
                             n_max=safety_cfg.n_max,
                         )
 
-                    elif safety_cfg.method == "varadhan" and unsafe_points is not None:
-                        score_fn = make_safe_score_fn_varadhan(
+                    elif safety_cfg.method == "full_window_scaled" and unsafe_points is not None:
+                        score_fn = make_full_window_scaled_kernel_repulsion_score_fn(
                             score_fn,
                             unsafe_points,
                             self.transform.domain,
@@ -492,8 +440,8 @@ class SDEPushForward(PushForward):
                             beta_max=safety_cfg.beta_max,
                         )
 
-                    elif safety_cfg.method == "experimental" and unsafe_points is not None:
-                        score_fn = make_safe_score_fn_experimental(
+                    elif safety_cfg.method == "late_window_scaled" and unsafe_points is not None:
+                        score_fn = make_late_window_kernel_repulsion_score_fn(
                             score_fn,
                             unsafe_points,
                             self.transform.domain,
@@ -501,15 +449,6 @@ class SDEPushForward(PushForward):
                             beta_max=safety_cfg.beta_max,
                             t_min=safety_cfg.t_min,
                             t_max=safety_cfg.t_max,
-                        )
-
-                    elif safety_cfg.method == "barrier":
-                        score_fn = make_safe_score_fn_barrier(
-                            score_fn,
-                            phi_min=safety_cfg.phi_min,
-                            phi_max=safety_cfg.phi_max,
-                            eta=safety_cfg.eta,
-                            t_barrier=safety_cfg.t_barrier,
                         )
 
                 sde = self.sde.reverse(score_fn) if reverse else self.sde

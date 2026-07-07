@@ -5,16 +5,15 @@ phi_min: -0.3
 phi_max: 0.3
 target_n: 30
 
-# Safety method: "spectral", "varadhan" (modifies score fn) or "noise_rejection" (accept-reject at t=T)
-method: spectral
+# Safety method: "early_window", "full_window_scaled", "late_window_scaled", or "noise_rejection"
+method: early_window
 rejection_radius: 0.5  # geodesic radius (radians) for noise rejection
 
 # Score correction
 eta: 5.0      # overall strength of the safety correction
 beta_max: 10.0 # hard cap on beta to prevent blow-up
-t_min: 0.0    # disable guardrail below this diffusion time (spectral/varadhan)
-t_max: 0.2     # disable guardrail above this diffusion time (experimental only)
-t_barrier: 0.3 # activate barrier below this diffusion time (barrier method)
+t_min: 0.0    # early_window: disable guardrail below this t; late_window_scaled: lower bound of active window
+t_max: 0.2     # late_window_scaled: upper bound of active window
 
 # Heat kernel approximation
 n_max: 5       # number of terms in the series expansion

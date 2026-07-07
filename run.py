@@ -198,7 +198,7 @@ def run(cfg):
         )
 
         # Naive noise rejection: forward-diffuse unsafe points to noise space once
-        method = getattr(safety, 'method', 'spectral')
+        method = getattr(safety, 'method', 'early_window')
         noised_unsafe_points = None
         if safety.enabled and unsafe_points is not None and method == 'noise_rejection':
             rng, fwd_rng = jax.random.split(rng)
@@ -208,7 +208,7 @@ def run(cfg):
         sampler = pushforward.get_sampler(
             model_w_dicts,
             train=False,
-            unsafe_points=unsafe_points if method in ['spectral', 'varadhan', 'experimental'] else None,
+            unsafe_points=unsafe_points if method in ['early_window', 'full_window_scaled', 'late_window_scaled'] else None,
             safety_cfg=safety if safety.enabled else None,
             noised_unsafe_points=noised_unsafe_points,
             **sampler_kwargs)
