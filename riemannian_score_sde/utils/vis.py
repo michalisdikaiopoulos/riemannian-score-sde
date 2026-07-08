@@ -171,16 +171,6 @@ def plot_3d(x0, xt, size, prob=None, vectors=None, vector_origins=None, unsafe_p
 
     if unsafe_points is not None:
         unsafe_np = np.array(unsafe_points)
-        unsafe_np = unsafe_np * 1.1
-
-        mean_dir = unsafe_np.mean(axis=0)
-        mean_dir = mean_dir / np.linalg.norm(mean_dir)
-
-        azim = np.degrees(np.arctan2(mean_dir[1], mean_dir[0]))
-
-        ax.view_init(elev=30, azim=azim)
-
-        unsafe_np = np.array(unsafe_points)
 
         ax.scatter(
             unsafe_np[:, 0],
