@@ -1,9 +1,17 @@
 enabled: false
 
-# Unsafe region definition (azimuthal wedge on S2)
+# Unsafe region definition. Two mutually exclusive shapes, picked via `region`:
+#   "wedge"     (default) - azimuthal wedge on S2, mirrored at +pi to give two
+#                opposite wedges on the ring. Uses phi_min/phi_max.
+#   "component" - geodesic cap of radius `cap_radius` around the mean direction
+#                of Kent mixture component `unsafe_component` (requires a
+#                dataset exposing `.means`, e.g. KentSynthetic).
+region: wedge
 phi_min: -0.3
 phi_max: 0.3
-target_n: 30
+unsafe_component: 0  # index into dataset.means (region: component)
+cap_radius: 0.5       # geodesic radius in radians (region: component)
+target_n: 30  # total reference points collected across the unsafe region
 
 # Safety method: "early_window", "full_window_scaled", "late_window_scaled", or "noise_rejection"
 method: early_window

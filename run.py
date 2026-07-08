@@ -25,6 +25,63 @@ from riemannian_score_sde.utils.vis import plot, plot_ref, animate_sampling
 log = logging.getLogger(__name__)
 
 
+def _unsafe_wedge_mask(phi, phi_min, phi_max, xp=jnp):
+    """Mask for phi in the configured wedge, mirrored to the opposite side of the ring (+pi)."""
+    center = (phi_min + phi_max) / 2
+    half_width = (phi_max - phi_min) / 2
+    center2 = xp.arctan2(xp.sin(center + xp.pi), xp.cos(center + xp.pi))
+
+    def in_wedge(c):
+        diff = xp.arctan2(xp.sin(phi - c), xp.cos(phi - c))
+        return xp.abs(diff) < half_width
+
+    return in_wedge(center) | in_wedge(center2)
+
+
+def _unsafe_component_mask(x, center, radius, xp=jnp):
+    """Mask for points within geodesic `radius` of a fixed direction `center` on S2."""
+    cos_dist = xp.clip(x @ xp.asarray(center), -1.0, 1.0)
+    return xp.arccos(cos_dist) < radius
+
+
+def _get_unsafe_mask_fn(safety, dataset):
+    """Build a fn x0 -> bool mask flagging the configured unsafe region.
+
+    region="wedge" (default): azimuthal band [phi_min, phi_max] mirrored at +pi.
+    region="component": geodesic cap of radius `cap_radius` around the mean
+    direction of Kent mixture component `unsafe_component`.
+    """
+    region = getattr(safety, "region", "wedge")
+    if region == "component":
+        base_ds = dataset
+        while hasattr(base_ds, "dataset"):
+            base_ds = base_ds.dataset
+        means = getattr(base_ds, "means", None)
+        if means is None:
+            raise ValueError(
+                "safety.region='component' requires a dataset exposing `.means` "
+                "(e.g. KentSynthetic); got "
+                f"{type(base_ds).__name__} which has no `.means` attribute."
+            )
+        if not (0 <= safety.unsafe_component < len(means)):
+            raise ValueError(
+                f"safety.unsafe_component={safety.unsafe_component} is out of range "
+                f"for dataset with {len(means)} components."
+            )
+        center = jnp.asarray(means[safety.unsafe_component])
+
+        def mask_fn(x0, xp=jnp):
+            return _unsafe_component_mask(x0, center, safety.cap_radius, xp=xp)
+
+        return mask_fn
+    else:
+        def mask_fn(x0, xp=jnp):
+            phi = xp.arctan2(x0[:, 1], x0[:, 0])
+            return _unsafe_wedge_mask(phi, safety.phi_min, safety.phi_max, xp=xp)
+
+        return mask_fn
+
+
 def _compute_mmd(x_gen, x_real, n_subsample=2000):
     x = np.array(x_gen[:n_subsample])
     y = np.array(x_real[:n_subsample])
@@ -172,13 +229,13 @@ def run(cfg):
         
         # Collect unsafe reference points if safety guardrail is enabled
         safety = cfg.safety
+        unsafe_mask_fn = _get_unsafe_mask_fn(safety, dataset)
         unsafe_points = None
         if safety.enabled:
             unsafe_points_list = []
             while True:
                 x0, _ = next(dataset)
-                phi = jnp.arctan2(x0[:, 1], x0[:, 0])
-                mask = (phi > safety.phi_min) & (phi < safety.phi_max)
+                mask = unsafe_mask_fn(x0)
                 selected = x0[mask]
                 if selected.shape[0] > 0:
                     unsafe_points_list.append(selected)
@@ -187,7 +244,12 @@ def run(cfg):
                     if unsafe_points.shape[0] >= safety.target_n:
                         unsafe_points = unsafe_points[:safety.target_n]
                         break
-            log.info(f"Safety guardrail enabled: collected {safety.target_n} unsafe points")
+            region_desc = (
+                f"component {safety.unsafe_component} (cap radius={safety.cap_radius:.2f})"
+                if getattr(safety, "region", "wedge") == "component"
+                else f"φ∈[{safety.phi_min:.2f},{safety.phi_max:.2f}] and its mirror at +π"
+            )
+            log.info(f"Safety guardrail enabled: collected {safety.target_n} unsafe points across {region_desc}")
 
         M = 32 if isinstance(pushforward, SDEPushForward) else 8
         model_w_dicts = (model, train_state.params_ema, train_state.model_state)
@@ -220,11 +282,9 @@ def run(cfg):
         prop_in_M = data_manifold.belongs(x, atol=1e-4).mean()
         log.info(f"Prop samples in M = {100 * prop_in_M.item():.1f}%")
 
-        if safety.enabled:
-            phi = jnp.arctan2(x[:, 1], x[:, 0])
-            asr = jnp.mean((phi > safety.phi_min) & (phi < safety.phi_max)).item()
-            log.info(f"Proportion of generated samples in unsafe region [φ={safety.phi_min:.2f}, φ={safety.phi_max:.2f}] = {100 * asr:.2f}%")
-            logger.log_metrics({"safety/asr": asr}, step)
+        asr = jnp.mean(unsafe_mask_fn(x)).item()
+        log.info(f"Proportion of generated samples in unsafe region = {100 * asr:.2f}%")
+        logger.log_metrics({"safety/asr": asr}, step)
 
         # --- MMD between generated and real test samples ---
         real_batches = []
@@ -232,14 +292,20 @@ def run(cfg):
         while sum(b.shape[0] for b in real_batches) < n_real_target:
             real_batches.append(np.array(next(dataset)[0]))
         x_real = np.concatenate(real_batches, axis=0)
-        if safety.enabled:
-            phi_real = np.arctan2(x_real[:, 1], x_real[:, 0])
-            x_real = x_real[(phi_real <= safety.phi_min) | (phi_real >= safety.phi_max)]
-            log.info(f"MMD reference: {x_real.shape[0]} safe real samples")
         x_for_mmd = np.array(x)
         mmd = _compute_mmd(x_for_mmd, x_real)
         log.info(f"{stage}/mmd = {mmd:.4f}")
         logger.log_metrics({f"{stage}/mmd": mmd}, step)
+
+        # Safe MMD: real reference restricted to the safe region, computed regardless
+        # of whether the safety mechanism is on, so baseline runs are comparable.
+        phi_real = np.arctan2(x_real[:, 1], x_real[:, 0])
+        # x_real_safe = x_real[~_unsafe_wedge_mask(phi_real, safety.phi_min, safety.phi_max, xp=np)]
+        # x_real_safe = x_real[~_unsafe_cap_mask(phi_real, safety.phi_min, safety.phi_max, xp=np)]
+        # log.info(f"Safe MMD reference: {x_real_safe.shape[0]} safe real samples")
+        # safe_mmd = _compute_mmd(x_for_mmd, x_real_safe)
+        # log.info(f"{stage}/safe_mmd = {safe_mmd:.4f}")
+        # logger.log_metrics({f"{stage}/safe_mmd": safe_mmd}, step)
 
         # --- samples from model (original plot, no vectors) ---
         likelihood_fn = pushforward.get_log_prob(model_w_dicts, train=False)

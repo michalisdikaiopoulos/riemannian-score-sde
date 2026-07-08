@@ -1,0 +1,26 @@
+enabled: true
+
+# Unsafe region = geodesic cap around one Kent mixture component's mean.
+region: component
+unsafe_component: 0  # index into dataset.means, must be < dataset.n_components
+cap_radius: 0.5       # geodesic radius in radians
+target_n: 30
+
+# Safety method: "early_window", "full_window_scaled", "late_window_scaled", or "noise_rejection"
+method: early_window
+rejection_radius: 0.5
+
+# Score correction
+eta: 5.0
+beta_max: 10.0
+t_min: 0.0
+t_max: 0.2
+
+# Heat kernel approximation
+n_max: 5
+
+# Delay method params
+r_threshold: 0.1
+repulsion_strength: 3.0
+delay_factor: 0.5
+t_delay: 0.3
