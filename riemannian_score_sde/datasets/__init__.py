@@ -3,3 +3,4 @@ from .simple import *
 from .mixture import *
 from .kent_synthetic import *
 from .ring import *
+from .checkerboard import *

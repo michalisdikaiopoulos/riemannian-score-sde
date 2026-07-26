@@ -1,0 +1,6 @@
+# @package _global_
+name: checkerboard_synthetic
+experiment: checkerboard_synthetic
+defaults:
+  - earth_data
+  - /dataset: checkerboard_synthetic
