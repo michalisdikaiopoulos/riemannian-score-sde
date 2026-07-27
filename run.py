@@ -87,7 +87,11 @@ def _compute_mmd(x_gen, x_real, n_subsample=2000):
     y = np.array(x_real[:n_subsample])
 
     def geodesic_dists(a, b):
-        return np.arccos(np.clip(a @ b.T, -1.0, 1.0))
+        if a.ndim == 3:  # rotation matrices on SO(3): d(R1,R2) = arccos((tr(R1^T R2) - 1) / 2)
+            cos_dist = (np.einsum("nab,mab->nm", a, b) - 1.0) / 2.0
+        else:  # unit vectors on a sphere: d(x,y) = arccos(x . y)
+            cos_dist = a @ b.T
+        return np.arccos(np.clip(cos_dist, -1.0, 1.0))
 
     bw = float(np.median(geodesic_dists(x[:200], y[:200]).ravel()))
     if bw < 1e-6:
