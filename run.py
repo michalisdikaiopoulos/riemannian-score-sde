@@ -38,10 +38,10 @@ def _unsafe_wedge_mask(phi, phi_min, phi_max, xp=jnp):
     return in_wedge(center) | in_wedge(center2)
 
 
-def _unsafe_component_mask(x, center, radius, xp=jnp):
-    """Mask for points within geodesic `radius` of a fixed direction `center` on S2."""
-    cos_dist = xp.clip(x @ xp.asarray(center), -1.0, 1.0)
-    return xp.arccos(cos_dist) < radius
+def _unsafe_component_mask(x, center, radius, manifold, xp=jnp):
+    """Mask for points within geodesic `radius` of a fixed point `center`."""
+    center_b = xp.broadcast_to(center, x.shape)
+    return manifold.metric.dist(x, center_b) < radius
 
 
 def _get_unsafe_mask_fn(safety, dataset):
@@ -58,10 +58,12 @@ def _get_unsafe_mask_fn(safety, dataset):
             base_ds = base_ds.dataset
         means = getattr(base_ds, "means", None)
         if means is None:
+            means = getattr(base_ds, "mean", None)  # e.g. Wrapped stores it singular
+        if means is None:
             raise ValueError(
                 "safety.region='component' requires a dataset exposing `.means` "
-                "(e.g. KentSynthetic); got "
-                f"{type(base_ds).__name__} which has no `.means` attribute."
+                "(e.g. KentSynthetic) or `.mean` (e.g. Wrapped); got "
+                f"{type(base_ds).__name__} which has neither."
             )
         if not (0 <= safety.unsafe_component < len(means)):
             raise ValueError(
@@ -69,9 +71,10 @@ def _get_unsafe_mask_fn(safety, dataset):
                 f"for dataset with {len(means)} components."
             )
         center = jnp.asarray(means[safety.unsafe_component])
+        manifold = base_ds.manifold
 
         def mask_fn(x0, xp=jnp):
-            return _unsafe_component_mask(x0, center, safety.cap_radius, xp=xp)
+            return _unsafe_component_mask(x0, center, safety.cap_radius, manifold, xp=xp)
 
         return mask_fn
     else:
@@ -324,7 +327,15 @@ def run(cfg):
         # --- vector field on uniform grid ---
         rng, next_rng = jax.random.split(rng)
         n_grid = 500
-        grid_points = jnp.array(data_manifold.random_uniform(state=rng, n_samples=n_grid))
+        if hasattr(data_manifold, "random_uniform"):
+            grid_points = jnp.array(data_manifold.random_uniform(state=rng, n_samples=n_grid))
+        else:
+            # Non-compact manifolds (e.g. hyperbolic space) have no uniform measure to
+            # sample from, so fall back to real data points as the grid instead.
+            grid_batches = []
+            while sum(b.shape[0] for b in grid_batches) < n_grid:
+                grid_batches.append(np.array(next(dataset)[0]))
+            grid_points = jnp.array(np.concatenate(grid_batches, axis=0)[:n_grid])
         t_array = jnp.full((n_grid, 1), cfg.eps)
         vectors, _ = model.apply(
             train_state.params_ema,

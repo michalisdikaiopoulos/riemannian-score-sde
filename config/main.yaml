@@ -19,7 +19,7 @@ defaults:
 eval_batch_size: ${batch_size}
 now: ${now:%Y-%m-%d}/${now:%H-%M-%S}
 
-resume: true
+resume: false
 mode: all
 seed: 0
 PROJECT_NAME: score-sde

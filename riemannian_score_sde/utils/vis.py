@@ -391,6 +391,115 @@ def plot_t2(x0, xt, size, **kwargs):
     return fig
 
 
+def torus_surface(ax, R=2.0, r=0.8, color="lightgray"):
+    n = 100
+    u = np.linspace(0, 2 * np.pi, n)
+    v = np.linspace(0, 2 * np.pi, n)
+    U, V = np.meshgrid(u, v)
+    X = (R + r * np.cos(V)) * np.cos(U)
+    Y = (R + r * np.cos(V)) * np.sin(U)
+    Z = r * np.sin(V)
+    ax.plot_surface(X, Y, Z, rstride=4, cstride=4, color=color, linewidth=0, alpha=0.15)
+    return ax
+
+
+def torus_3d_from_angles(theta, R=2.0, r=0.8):
+    """theta: (...,2) angles [theta1, theta2] -> (...,3) embedding in R^3."""
+    theta1, theta2 = theta[..., 0], theta[..., 1]
+    x = (R + r * jnp.cos(theta2)) * jnp.cos(theta1)
+    y = (R + r * jnp.cos(theta2)) * jnp.sin(theta1)
+    z = r * jnp.sin(theta2)
+    return jnp.stack([x, y, z], axis=-1)
+
+
+def torus_tangent_to_3d(x, v, R=2.0, r=0.8):
+    """Push forward an ambient tangent vector v at ambient point x (both (...,4),
+    layout [sin1,cos1,sin2,cos2] matching proj_t2) to R^3 via the torus embedding."""
+    s1, c1, s2, c2 = x[..., 0], x[..., 1], x[..., 2], x[..., 3]
+    dtheta1 = v[..., 0] * c1 - v[..., 1] * s1
+    dtheta2 = v[..., 2] * c2 - v[..., 3] * s2
+
+    d_embed_dtheta1 = jnp.stack(
+        [-(R + r * c2) * s1, (R + r * c2) * c1, jnp.zeros_like(s1)], axis=-1
+    )
+    d_embed_dtheta2 = jnp.stack([-r * s2 * c1, -r * s2 * s1, r * c2], axis=-1)
+
+    return dtheta1[..., None] * d_embed_dtheta1 + dtheta2[..., None] * d_embed_dtheta2
+
+
+def plot_torus_3d(
+    x0,
+    xt,
+    size,
+    prob=None,
+    vectors=None,
+    vector_origins=None,
+    unsafe_points=None,
+    unsafe_label="unsafe",
+    R=2.0,
+    r=0.8,
+):
+    """3D rendering of a genuine 2-torus (S1 x S1), analogous to plot_3d for S^2:
+    draws the donut surface and scatters points on it, colored by density."""
+    fig = plt.figure(figsize=(size, size))
+    ax = fig.add_subplot(111, projection="3d")
+    ax = remove_background(ax)
+    fig.subplots_adjust(left=-0.2, bottom=-0.2, right=1.2, top=1.2, wspace=0, hspace=0)
+    ax.view_init(elev=30, azim=45)
+    cmap = sns.cubehelix_palette(as_cmap=True)
+    torus_surface(ax, R=R, r=r)
+
+    if x0 is not None:
+        pts0 = np.array(torus_3d_from_angles(proj_t2(x0), R=R, r=r))
+        ax.scatter(pts0[:, 0], pts0[:, 1], pts0[:, 2], s=50, color="green")
+
+    if xt is not None:
+        pts = np.array(torus_3d_from_angles(proj_t2(xt), R=R, r=r))
+        c = prob(xt) if prob is not None else "blue"
+        cax = ax.scatter(
+            pts[:, 0], pts[:, 1], pts[:, 2], s=20, alpha=0.2, vmin=0.0, vmax=2.0, c=c, cmap=cmap
+        )
+        if prob is not None:
+            plt.colorbar(cax)
+
+    if vectors is not None and vector_origins is not None:
+        origins_3d = np.array(torus_3d_from_angles(proj_t2(vector_origins), R=R, r=r))
+        vecs_3d = np.array(torus_tangent_to_3d(vector_origins, vectors, R=R, r=r))
+        x, y, z = origins_3d[:, 0], origins_3d[:, 1], origins_3d[:, 2]
+        uu, vv, ww = vecs_3d[:, 0], vecs_3d[:, 1], vecs_3d[:, 2]
+        mags = np.linalg.norm(vecs_3d, axis=-1)
+        norm = plt.Normalize(vmin=mags.min(), vmax=mags.max())
+        arrow_colors = plt.cm.plasma(norm(mags))
+        ax.quiver(
+            x, y, z, uu, vv, ww,
+            length=0.15,
+            lw=1.2,
+            normalize=True,
+            colors=arrow_colors,
+            arrow_length_ratio=0.35,
+        )
+
+    if unsafe_points is not None:
+        unsafe_3d = np.array(torus_3d_from_angles(proj_t2(unsafe_points), R=R, r=r))
+        ax.scatter(
+            unsafe_3d[:, 0],
+            unsafe_3d[:, 1],
+            unsafe_3d[:, 2],
+            s=400,
+            color="black",
+            marker="o",
+            edgecolors="yellow",
+            linewidths=2,
+            zorder=10,
+            label=unsafe_label,
+        )
+        ax.legend()
+
+    set_aspect_equal_3d(ax)
+    plt.close(fig)
+    return fig
+
+
 import seaborn as sns
 
 
@@ -690,6 +799,13 @@ def plot(manifold, x0, xt, log_prob=None, vectors=None, vector_origins=None, uns
         and manifold.dim == 1
     ) or (isinstance(manifold, Hypersphere) and manifold.dim == 1):
         fig = plot_t1(x0, xt, size, prob=prob)
+    elif (
+        isinstance(manifold, ProductSameManifold)
+        and isinstance(manifold.manifold, Hypersphere)
+        and manifold.manifold.dim == 1
+        and manifold.mul == 2
+    ):
+        fig = plot_torus_3d(x0, xt, size, prob=prob, vectors=vectors, vector_origins=vector_origins, unsafe_points=unsafe_points, unsafe_label=unsafe_label)
     elif (
         isinstance(manifold, ProductSameManifold)
         and isinstance(manifold.manifold, Hypersphere)

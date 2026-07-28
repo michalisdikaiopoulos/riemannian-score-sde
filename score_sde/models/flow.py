@@ -118,7 +118,9 @@ def make_early_window_kernel_repulsion_score_fn(score_fn, unsafe_points, manifol
 
         log_vecs = log_map_batch(y, unsafe_points, metric)
         log_p = heat_kernel_log(y, unsafe_points, t_safe, manifold, n_max=n_max)
-        log_p = log_p - jnp.max(log_p, axis=1, keepdims=True)
+        row_max = jnp.max(log_p, axis=1, keepdims=True)
+        row_max = jnp.where(jnp.isfinite(row_max), row_max,0.0)  # avoid -inf - -inf = NaN when no unsafe point is close enough to contribute
+        log_p = log_p - row_max
         weights = jnp.exp(log_p)
         weighted_sum = jnp.sum(weights[..., None] * log_vecs, axis=1)
         sum_weights = jnp.sum(weights, axis=1, keepdims=True) + 1e-8
@@ -173,7 +175,9 @@ def make_full_window_scaled_kernel_repulsion_score_fn(score_fn, unsafe_points, m
         use_spectral = (jnp.mean(t) >= 0.5)
         log_p = jnp.where(use_spectral, log_p_spectral, log_p_varadhan)
         # --- stabilize ---
-        log_p = log_p - jnp.max(log_p, axis=1, keepdims=True)
+        row_max = jnp.max(log_p, axis=1, keepdims=True)
+        row_max = jnp.where(jnp.isfinite(row_max), row_max,0.0)  # avoid -inf - -inf = NaN when no unsafe point is close enough to contribute
+        log_p = log_p - row_max
         weights = jnp.exp(log_p)
         # --- weighted sum ---
         weighted_sum = jnp.sum(weights[..., None] * log_vecs, axis=1)
@@ -230,7 +234,9 @@ def make_late_window_kernel_repulsion_score_fn(score_fn, unsafe_points, manifold
         use_spectral = (jnp.mean(t) >= 0.5)
         log_p = jnp.where(use_spectral, log_p_spectral, log_p_varadhan)
         # --- stabilize ---
-        log_p = log_p - jnp.max(log_p, axis=1, keepdims=True)
+        row_max = jnp.max(log_p, axis=1, keepdims=True)
+        row_max = jnp.where(jnp.isfinite(row_max), row_max,0.0)  # avoid -inf - -inf = NaN when no unsafe point is close enough to contribute
+        log_p = log_p - row_max
         weights = jnp.exp(log_p)
         # --- weighted sum ---
         weighted_sum = jnp.sum(weights[..., None] * log_vecs, axis=1)
