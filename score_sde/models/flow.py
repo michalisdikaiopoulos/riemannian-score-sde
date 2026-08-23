@@ -124,10 +124,10 @@ def make_early_window_kernel_repulsion_score_fn(score_fn, unsafe_points, manifol
         weights = jnp.exp(log_p)
         weighted_sum = jnp.sum(weights[..., None] * log_vecs, axis=1)
         sum_weights = jnp.sum(weights, axis=1, keepdims=True) + 1e-8
-        unsafe_score = weighted_sum / sum_weights
+        unsafe_score = (weighted_sum / sum_weights) / t_safe
 
         n = unsafe_points.shape[0]
-        beta = eta * (1.0 / n) * sum_weights
+        beta = eta * (1.0 / n) * sum_weights * jnp.exp(row_max)
         beta = jnp.clip(beta, 0.0, beta_max)
 
         correction = score - unsafe_score

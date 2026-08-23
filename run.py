@@ -35,7 +35,7 @@ def _unsafe_wedge_mask(phi, phi_min, phi_max, xp=jnp):
         diff = xp.arctan2(xp.sin(phi - c), xp.cos(phi - c))
         return xp.abs(diff) < half_width
 
-    return in_wedge(center) | in_wedge(center2)
+    return in_wedge(center) # | in_wedge(center2)
 
 
 def _unsafe_component_mask(x, center, radius, manifold, xp=jnp):
