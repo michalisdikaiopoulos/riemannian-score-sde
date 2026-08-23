@@ -289,9 +289,9 @@ def run(cfg):
         prop_in_M = data_manifold.belongs(x, atol=1e-4).mean()
         log.info(f"Prop samples in M = {100 * prop_in_M.item():.1f}%")
 
-        asr = jnp.mean(unsafe_mask_fn(x)).item()
-        log.info(f"Proportion of generated samples in unsafe region = {100 * asr:.2f}%")
-        logger.log_metrics({"safety/asr": asr}, step)
+        vr = jnp.mean(unsafe_mask_fn(x)).item()
+        log.info(f"Proportion of generated samples in unsafe region = {100 * vr:.2f}%")
+        logger.log_metrics({"safety/vr": vr}, step)
 
         # --- MMD between generated and real test samples ---
         real_batches = []
