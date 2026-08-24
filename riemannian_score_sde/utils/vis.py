@@ -17,6 +17,7 @@ from geomstats.geometry.special_orthogonal import (
 )
 from jax import numpy as jnp
 from matplotlib.animation import FuncAnimation
+from matplotlib.lines import Line2D
 from matplotlib.patches import Circle
 from scipy.stats import norm
 
@@ -135,24 +136,124 @@ def get_spherical_grid(N, eps=0.0):
     return xs, lat, lon
 
 
-def plot_3d(x0, xt, size, prob=None, vectors=None, vector_origins=None, unsafe_points=None, unsafe_label="unsafe"):
+# ---------------------------------------------------------------- palette ---
+SPHERE_FACE = "#e8e8e8"   # light gray shell
+GRATICULE = "#9a9a9a"     # lat/lon lines
+SAMPLE_FACE = "#4caf50"   # green sample fill
+SAMPLE_EDGE = "#2e6b31"   # darker green rim
+UNSAFE_COLOR = "#e02020"  # red X
+
+
+def _draw_sphere(ax, radius=0.99, alpha=0.35, n_meridians=12, n_parallels=6):
+    """Smooth shaded shell + thin graticule, drawn *behind* everything else."""
+    u = np.linspace(0, 2 * np.pi, 120)
+    v = np.linspace(0, np.pi, 60)
+    xs = radius * np.outer(np.cos(u), np.sin(v))
+    ys = radius * np.outer(np.sin(u), np.sin(v))
+    zs = radius * np.outer(np.ones_like(u), np.cos(v))
+
+    ax.plot_surface(
+        xs, ys, zs,
+        rstride=1, cstride=1,
+        color=SPHERE_FACE,
+        alpha=alpha,
+        linewidth=0,
+        antialiased=True,
+        shade=True,          # gives the soft light gradient
+        zorder=0,
+    )
+
+    # meridians
+    t = np.linspace(0, np.pi, 200)
+    for lon in np.linspace(0, 2 * np.pi, n_meridians, endpoint=False):
+        ax.plot(
+            radius * np.cos(lon) * np.sin(t),
+            radius * np.sin(lon) * np.sin(t),
+            radius * np.cos(t),
+            color=GRATICULE, lw=0.45, alpha=0.45, zorder=1,
+        )
+
+    # parallels
+    p = np.linspace(0, 2 * np.pi, 200)
+    for lat in np.linspace(-np.pi / 2, np.pi / 2, n_parallels + 2)[1:-1]:
+        ax.plot(
+            radius * np.cos(lat) * np.cos(p),
+            radius * np.cos(lat) * np.sin(p),
+            radius * np.sin(lat) * np.ones_like(p),
+            color=GRATICULE, lw=0.45, alpha=0.45, zorder=1,
+        )
+
+
+def plot_3d(
+    x0,
+    xt,
+    size,
+    prob=None,
+    vectors=None,
+    vector_origins=None,
+    unsafe_points=None,
+    unsafe_label="unsafe",
+    color_by_prob=False,   # set True to get the old density colormap + colorbar
+):
     fig = plt.figure(figsize=(size, size))
     ax = fig.add_subplot(111, projection="3d")
     ax = remove_background(ax)
     fig.subplots_adjust(left=-0.2, bottom=-0.2, right=1.2, top=1.2, wspace=0, hspace=0)
-    ax.view_init(elev=30, azim=45)
-    cmap = sns.cubehelix_palette(as_cmap=True)
-    sphere = visualization.Sphere()
-    sphere.draw(ax, color="lightgray", marker=".", alpha=0.15)
+    # Rotate azimuth to face the unsafe cluster; elevation stays fixed at 30.
+    if unsafe_points is not None and len(unsafe_points) > 0:
+        centroid = np.array(unsafe_points).mean(axis=0)
+        azim = np.degrees(np.arctan2(centroid[1], centroid[0]))
+    else:
+        azim = 45
+    ax.view_init(elev=30, azim=azim)
+
+    # Manual draw order: matplotlib's auto z-sorting hides markers behind a
+    # translucent surface. Turning it off means every scatter is painted on
+    # top of the shell, so back-hemisphere points stay visible.
+    try:
+        ax.computed_zorder = False
+    except AttributeError:  # matplotlib < 3.5
+        pass
+
+    ax.set_box_aspect([1, 1, 1])
+    ax.set_xlim(-0.72, 0.72)
+    ax.set_ylim(-0.72, 0.72)
+    ax.set_zlim(-0.72, 0.72)
+
+    _draw_sphere(ax)
+
+    legend_handles = []
 
     if x0 is not None:
-        cax = ax.scatter(x0[:, 0], x0[:, 1], x0[:, 2], s=50, color="green")
+        ax.scatter(
+            x0[:, 0], x0[:, 1], x0[:, 2],
+            s=22, facecolors=SAMPLE_FACE, edgecolors=SAMPLE_EDGE,
+            linewidths=0.4, alpha=0.9, depthshade=False, zorder=3,
+        )
+        legend_handles.append(Line2D(
+            [0], [0], marker="o", linestyle="", markerfacecolor=SAMPLE_FACE,
+            markeredgecolor=SAMPLE_EDGE, markersize=8, label="Data points",
+        ))
 
     if xt is not None:
         x, y, z = xt[:, 0], xt[:, 1], xt[:, 2]
-        c = prob(xt) if prob is not None else "blue"
-        cax = ax.scatter(x, y, z, s=20, alpha=0.2, vmin=0.0, vmax=2.0, c=c, cmap=cmap)
-        plt.colorbar(cax)
+        if color_by_prob and prob is not None:
+            cmap = sns.cubehelix_palette(as_cmap=True)
+            cax = ax.scatter(
+                x, y, z, s=18, alpha=0.55, vmin=0.0, vmax=2.0,
+                c=prob(xt), cmap=cmap, depthshade=False, zorder=3,
+            )
+            fig.colorbar(cax, ax=ax, shrink=0.6, pad=0.02)
+        else:
+            ax.scatter(
+                x, y, z,
+                s=18, facecolors=SAMPLE_FACE, edgecolors=SAMPLE_EDGE,
+                linewidths=0.35, alpha=0.85, depthshade=False, zorder=3,
+            )
+            legend_handles.append(Line2D(
+                [0], [0], marker="o", linestyle="", markerfacecolor=SAMPLE_FACE,
+                markeredgecolor=SAMPLE_EDGE, markersize=8, label="Generated samples",
+            ))
 
     if vectors is not None and vector_origins is not None:
         x, y, z = vector_origins[:, 0], vector_origins[:, 1], vector_origins[:, 2]
@@ -162,30 +263,40 @@ def plot_3d(x0, xt, size, prob=None, vectors=None, vector_origins=None, unsafe_p
         arrow_colors = plt.cm.plasma(norm(mags))
         ax.quiver(
             x, y, z, u, v, w,
-            length=0.15,
-            lw=1.2,
-            normalize=True,
-            colors=arrow_colors,
-            arrow_length_ratio=0.35,
+            length=0.15, lw=1.2, normalize=True,
+            colors=arrow_colors, arrow_length_ratio=0.35, zorder=4,
         )
 
     if unsafe_points is not None:
         unsafe_np = np.array(unsafe_points)
-
         ax.scatter(
-            unsafe_np[:, 0],
-            unsafe_np[:, 1],
-            unsafe_np[:, 2],
-            s=400,  # MUCH bigger
-            color="black",
-            marker="o",
-            edgecolors="yellow",  # strong contrast
-            linewidths=2,
-            zorder=10,
-            label=unsafe_label
+            unsafe_np[:, 0], unsafe_np[:, 1], unsafe_np[:, 2],
+            s=160,
+            marker="X",
+            color=UNSAFE_COLOR,
+            linewidths=0.0,
+            depthshade=False,
+            zorder=5,
         )
+        legend_handles.append(Line2D(
+            [0], [0], marker="X", linestyle="", markerfacecolor=UNSAFE_COLOR,
+            markeredgecolor=UNSAFE_COLOR, markersize=11, label=unsafe_label,
+        ))
 
-        ax.legend()
+    if legend_handles:
+        # Anchored to the figure, not the axes: the 3D axes are deliberately
+        # expanded past the figure bounds (subplots_adjust above) to fill the
+        # frame, so an axes-relative legend location lands off-canvas.
+        fig.legend(
+            handles=legend_handles,
+            loc="upper right",
+            bbox_to_anchor=(0.86, 0.86),
+            fontsize=16,
+            frameon=False,
+            handletextpad=0.5,
+            labelspacing=0.6,
+            prop={"family": "serif"},
+        )
 
     plt.close(fig)
     return fig

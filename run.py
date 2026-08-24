@@ -234,29 +234,32 @@ def run(cfg):
         rng = jax.random.PRNGKey(cfg.seed)
         dataset = eval_ds if stage == "val" else test_ds
         
-        # Collect unsafe reference points if safety guardrail is enabled
+        # Collect unsafe reference points regardless of whether the guardrail is
+        # enabled, so the unguided (safety.enabled=False) plot also shows the
+        # unsafe region for comparison. Only used to steer sampling below when enabled.
         safety = cfg.safety
         unsafe_mask_fn = _get_unsafe_mask_fn(safety, dataset)
-        unsafe_points = None
-        if safety.enabled:
-            unsafe_points_list = []
-            while True:
-                x0, _ = next(dataset)
-                mask = unsafe_mask_fn(x0)
-                selected = x0[mask]
-                if selected.shape[0] > 0:
-                    unsafe_points_list.append(selected)
-                if len(unsafe_points_list) > 0:
-                    unsafe_points = jnp.concatenate(unsafe_points_list, axis=0)
-                    if unsafe_points.shape[0] >= safety.target_n:
-                        unsafe_points = unsafe_points[:safety.target_n]
-                        break
-            region_desc = (
-                f"component {safety.unsafe_component} (cap radius={safety.cap_radius:.2f})"
-                if getattr(safety, "region", "wedge") == "component"
-                else f"φ∈[{safety.phi_min:.2f},{safety.phi_max:.2f}] and its mirror at +π"
-            )
-            log.info(f"Safety guardrail enabled: collected {safety.target_n} unsafe points across {region_desc}")
+        unsafe_points_list = []
+        while True:
+            x0, _ = next(dataset)
+            mask = unsafe_mask_fn(x0)
+            selected = x0[mask]
+            if selected.shape[0] > 0:
+                unsafe_points_list.append(selected)
+            if len(unsafe_points_list) > 0:
+                unsafe_points = jnp.concatenate(unsafe_points_list, axis=0)
+                if unsafe_points.shape[0] >= safety.target_n:
+                    unsafe_points = unsafe_points[:safety.target_n]
+                    break
+        region_desc = (
+            f"component {safety.unsafe_component} (cap radius={safety.cap_radius:.2f})"
+            if getattr(safety, "region", "wedge") == "component"
+            else f"φ∈[{safety.phi_min:.2f},{safety.phi_max:.2f}] and its mirror at +π"
+        )
+        log.info(
+            f"Collected {safety.target_n} unsafe reference points across {region_desc} "
+            f"(guardrail {'enabled' if safety.enabled else 'disabled'})"
+        )
 
         M = 32 if isinstance(pushforward, SDEPushForward) else 8
         model_w_dicts = (model, train_state.params_ema, train_state.model_state)
@@ -277,7 +280,7 @@ def run(cfg):
         sampler = pushforward.get_sampler(
             model_w_dicts,
             train=False,
-            unsafe_points=unsafe_points if method in ['early_window', 'full_window_scaled', 'late_window_scaled'] else None,
+            unsafe_points=unsafe_points if safety.enabled and method in ['early_window', 'full_window_scaled', 'late_window_scaled'] else None,
             safety_cfg=safety if safety.enabled else None,
             noised_unsafe_points=noised_unsafe_points,
             **sampler_kwargs)
@@ -317,10 +320,7 @@ def run(cfg):
         # --- samples from model (original plot, no vectors) ---
         likelihood_fn = pushforward.get_log_prob(model_w_dicts, train=False)
         log_prob = jax.jit(lambda x: likelihood_fn(x)[0])
-        unsafe_label = (
-            f"unsafe (η={safety.eta}, t_min={safety.t_min})"
-            if safety.enabled else "unsafe"
-        )
+        unsafe_label = "Unsafe samples"
         plt = plot(data_manifold, None, x, log_prob=log_prob, unsafe_points=unsafe_points, unsafe_label=unsafe_label)
         logger.log_plot("x0_bwd", plt, step)
 
