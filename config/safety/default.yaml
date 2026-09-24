@@ -24,9 +24,3 @@ t_max: 0.2     # late_window_scaled: upper bound of active window
 
 # Heat kernel approximation
 n_max: 5       # number of terms in the series expansion
-
-# Delay method params ---
-r_threshold: 0.1          # distance to unsafe region (activation radius)
-repulsion_strength: 3.0   # how strong the push is
-delay_factor: 0.5         # how much to slow time (0 = none, 1 = freeze)
-t_delay: 0.3              # only apply delay below this t

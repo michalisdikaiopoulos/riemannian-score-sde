@@ -16,17 +16,6 @@ from score_sde.ode import odeint
 from score_sde.sampling import get_pc_sampler
 
 
-# --- Score logging (populated during reverse diffusion) ---
-_score_log = []
-
-def clear_score_log():
-    global _score_log
-    _score_log = []
-
-def get_score_log():
-    return list(_score_log)
-
-
 def get_div_fn(drift_fn, hutchinson_type: str = "None"):
     """Euclidean divergence of the drift function."""
     if hutchinson_type == "None":
@@ -154,25 +143,7 @@ def make_kernel_repulsion_score_fn(
         beta = jnp.clip(beta, 0.0, beta_max)
 
         safe_score = score + beta * correction
-        out = jnp.where((t_scalar < t_min) | (t_scalar > t_max), score, safe_score)
-
-        def _log(t_val, l, u, c, s):
-            _score_log.append({
-                "t":             float(t_val),
-                "|learned|":    float(l),
-                "|unsafe|":     float(u),
-                "|correction|": float(c),
-                "|safe|":       float(s),
-            })
-        jax.debug.callback(
-            _log,
-            t_scalar,
-            jnp.mean(jnp.linalg.norm(score,        axis=-1)),
-            jnp.mean(jnp.linalg.norm(unsafe_score,  axis=-1)),
-            jnp.mean(jnp.linalg.norm(correction,    axis=-1)),
-            jnp.mean(jnp.linalg.norm(out,           axis=-1)),
-        )
-        return out
+        return jnp.where((t_scalar < t_min) | (t_scalar > t_max), score, safe_score)
     return safe_score_fn
 
 def div_noise(
@@ -326,6 +297,9 @@ class SDEPushForward(PushForward):
                 if z is None:
                     if noised_unsafe_points is not None and safety_cfg is not None:
                         # Naive noise rejection: avoid neighborhoods of forward-diffused unsafe points
+                        from geomstats.geometry.hypersphere import Hypersphere
+                        if not isinstance(self.transform.domain, Hypersphere):
+                            raise NotImplementedError("noise_rejection only supports Hypersphere")
                         radius = getattr(safety_cfg, 'rejection_radius', 0.5)
                         rng, sub = jax.random.split(rng)
                         z = sample_safe_noise(sub, shape, self.base.sample, noised_unsafe_points, radius)
@@ -371,7 +345,7 @@ class SDEPushForward(PushForward):
                 sde = self.sde.reverse(score_fn) if reverse else self.sde
 
                 # Add return_hist=True
-                sampler = get_pc_sampler(sde, return_hist=True, **kwargs)
+                sampler = get_pc_sampler(sde, unsafe_points=None, safety_cfg=None, return_hist=True, **kwargs)
                 sampler = jax.jit(sampler)
 
                 # Unpack tuple
