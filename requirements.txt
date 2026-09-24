@@ -1,5 +1,4 @@
---find-links https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-jax[cuda12]==0.4.30
+jax==0.4.30
 jaxlib==0.4.30
 numpy<2
 dm-haiku

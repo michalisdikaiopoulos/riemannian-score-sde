@@ -13,7 +13,6 @@ unsafe_component: 0  # index into dataset.means (region: component)
 cap_radius: 0.5       # geodesic radius in radians (region: component)
 target_n: 30  # total reference points collected across the unsafe region
 
-# Safety method: "early_window", "full_window_scaled", "late_window_scaled", or "noise_rejection"
 method: early_window
 rejection_radius: 0.5  # geodesic radius (radians) for noise rejection
 

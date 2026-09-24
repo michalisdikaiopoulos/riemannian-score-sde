@@ -6,7 +6,6 @@ unsafe_component: 0  # index into dataset.means, must be < dataset.n_components
 cap_radius: 0.5       # geodesic radius in radians
 target_n: 30
 
-# Safety method: "early_window", "full_window_scaled", "late_window_scaled", or "noise_rejection"
 method: early_window
 rejection_radius: 0.5
 

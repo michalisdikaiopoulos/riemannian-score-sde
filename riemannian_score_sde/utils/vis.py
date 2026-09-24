@@ -961,7 +961,7 @@ def plot_ref(manifold, xt, size=10, log_prob=None):
 
 
 def animate_sampling(pushforward, model, train_state, epoch, cfg,
-                     volcano_data=None, n_samples=5, save_path='./animations'):
+                     eval_batch_data=None, n_samples=5, save_path='./animations'):
     """
     Create MP4 animation with density heatmap and volcano markers
 
@@ -971,7 +971,7 @@ def animate_sampling(pushforward, model, train_state, epoch, cfg,
         train_state: Current training state
         epoch: Current epoch number
         cfg: Configuration object
-        volcano_data: True volcano locations (N, 3) array
+        eval_batch_data: True data locations (N, 3) array
         n_samples: Number of trajectories to visualize (default: 2)
         save_path: Directory to save animation
     """
@@ -995,8 +995,8 @@ def animate_sampling(pushforward, model, train_state, epoch, cfg,
     trajectory = np.array(trajectory)
     timesteps = np.array(timesteps)
 
-    if volcano_data is not None:
-        volcano_data = np.array(volcano_data)
+    if eval_batch_data is not None:
+        eval_batch_data = np.array(eval_batch_data)
 
     # ===== CREATE DENSITY HEATMAP =====
     # Create grid on sphere
@@ -1011,7 +1011,7 @@ def animate_sampling(pushforward, model, train_state, epoch, cfg,
     z_sphere = np.sin(lat_grid)
 
     # Compute density at each grid point (distance-based)
-    if volcano_data is not None:
+    if eval_batch_data is not None:
         density = np.zeros((n_lat, n_lon))
 
         for i in range(n_lat):
@@ -1019,7 +1019,7 @@ def animate_sampling(pushforward, model, train_state, epoch, cfg,
                 point = np.array([x_sphere[i, j], y_sphere[i, j], z_sphere[i, j]])
 
                 # Compute distances to all volcanoes
-                distances = np.linalg.norm(volcano_data - point, axis=1)
+                distances = np.linalg.norm(eval_batch_data - point, axis=1)
 
                 # Gaussian kernel density (smaller distance = higher density)
                 bandwidth = 0.3  # Adjust this to control spread
@@ -1059,10 +1059,10 @@ def animate_sampling(pushforward, model, train_state, epoch, cfg,
                         linewidth=0, antialiased=True,
                         shade=False, zorder=9)
 
-        if volcano_data is not None:
-            ax.scatter(volcano_data[:, 0],
-                       volcano_data[:, 1],
-                       volcano_data[:, 2],
+        if eval_batch_data is not None:
+            ax.scatter(eval_batch_data[:, 0],
+                       eval_batch_data[:, 1],
+                       eval_batch_data[:, 2],
                        c='yellow', s=100, alpha=0.9,
                        marker='*',
                        edgecolors='black',
@@ -1089,11 +1089,11 @@ def animate_sampling(pushforward, model, train_state, epoch, cfg,
                        zorder=30,
                        label=f'Sample {sample_idx + 1}' if frame == 0 else '')
 
-        if volcano_data is not None:
+        if eval_batch_data is not None:
             distances = []
             for sample_idx in range(n_samples):
                 current_pos = trajectory[frame, sample_idx, :]
-                dists = np.linalg.norm(volcano_data - current_pos, axis=1)
+                dists = np.linalg.norm(eval_batch_data - current_pos, axis=1)
                 min_dist = np.min(dists)
                 distances.append(min_dist)
 

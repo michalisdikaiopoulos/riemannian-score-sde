@@ -151,10 +151,10 @@ def run(cfg):
                     generate_plots(train_state, "val", step=step)
 
                 if cfg.train_animate:
-                    volcano_data = []
+                    eval_batch_data = []
                     for batch in eval_ds:
-                        volcano_data.append(batch[0])
-                    volcano_data = np.concatenate(volcano_data, axis=0)
+                        eval_batch_data.append(batch[0])
+                    eval_batch_data = np.concatenate(eval_batch_data, axis=0)
 
                     animate_sampling(
                         pushforward=pushforward,
@@ -162,7 +162,7 @@ def run(cfg):
                         train_state=train_state,
                         epoch=step,
                         cfg=cfg,
-                        volcano_data=volcano_data,
+                        eval_batch_data=eval_batch_data,
                         save_path=os.path.join(run_path, 'animations')
                     )
                 train_time = timer()
@@ -171,14 +171,14 @@ def run(cfg):
 
         if cfg.train_animate:
             print(f"Generating final animation at step {cfg.steps}...")
-            volcano_data, _ = next(eval_ds)
+            eval_batch_data, _ = next(eval_ds)
             animate_sampling(
                 pushforward=pushforward,
                 model=model,
                 train_state=train_state,
                 epoch=cfg.steps,
                 cfg=cfg,
-                volcano_data=volcano_data,
+                eval_batch_data=eval_batch_data,
                 save_path=os.path.join(run_path, 'animations')
             )
 
