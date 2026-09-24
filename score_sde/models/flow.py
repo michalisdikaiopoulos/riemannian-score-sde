@@ -304,6 +304,20 @@ class SDEPushForward(PushForward):
             noised_unsafe_points=None,
             **kwargs
     ):
+        window_kwargs = None
+        if safety_cfg is not None:
+            method_kwargs = {
+                "early_window": dict(scaled=False, t_min=safety_cfg.t_min),
+                "full_window_scaled": dict(scaled=True),
+                "late_window_scaled": dict(scaled=True, t_min=safety_cfg.t_min, t_max=safety_cfg.t_max),
+                "noise_rejection": None,
+            }
+            if safety_cfg.method not in method_kwargs:
+                raise ValueError(
+                    f"Unknown safety method '{safety_cfg.method}', expected one of {list(method_kwargs)}"
+                )
+            window_kwargs = method_kwargs[safety_cfg.method]
+
         if self.diffeq == "ode":  # via probability flow
             sample = super().get_sampler(model_w_dicts, train, reverse)
         elif self.diffeq == "sde":  # via stochastic process
@@ -322,22 +336,16 @@ class SDEPushForward(PushForward):
                 score_fn = partial(score_fn, context=context)
 
                 # Apply score-correction safety mechanism
-                if safety_cfg is not None and unsafe_points is not None:
-                    window_kwargs = {
-                        "early_window": dict(scaled=False, t_min=safety_cfg.t_min),
-                        "full_window_scaled": dict(scaled=True),
-                        "late_window_scaled": dict(scaled=True, t_min=safety_cfg.t_min, t_max=safety_cfg.t_max),
-                    }.get(safety_cfg.method)
-                    if window_kwargs is not None:
-                        score_fn = make_kernel_repulsion_score_fn(
-                            score_fn,
-                            unsafe_points,
-                            self.transform.domain,
-                            eta=safety_cfg.eta,
-                            beta_max=safety_cfg.beta_max,
-                            n_max=safety_cfg.n_max,
-                            **window_kwargs,
-                        )
+                if window_kwargs is not None and unsafe_points is not None:
+                    score_fn = make_kernel_repulsion_score_fn(
+                        score_fn,
+                        unsafe_points,
+                        self.transform.domain,
+                        eta=safety_cfg.eta,
+                        beta_max=safety_cfg.beta_max,
+                        n_max=safety_cfg.n_max,
+                        **window_kwargs,
+                    )
 
                 sde = self.sde.reverse(score_fn) if reverse else self.sde
                 sampler = get_pc_sampler(sde, unsafe_points=unsafe_points, safety_cfg=safety_cfg, **kwargs)
