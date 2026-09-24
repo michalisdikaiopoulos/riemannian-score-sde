@@ -1,9 +1,14 @@
 jax==0.4.30
 jaxlib==0.4.30
 numpy<2
-dm-haiku
-optax
-distrax
-diffrax
+dm-haiku==0.0.16
+optax==0.2.5
+distrax==0.1.5
+diffrax==0.6.1
 fsspec[http]>=2021.05.0, !=2021.06.0
 joblib
+autograd
+chex==0.1.90
+equinox==0.11.10
+tensorflow-probability==0.25.0
+setuptools<81

@@ -1,0 +1,26 @@
+diff --git a/geomstats/geometry/hypersphere.py b/geomstats/geometry/hypersphere.py
+index f855f22e..9fe77002 100644
+--- a/geomstats/geometry/hypersphere.py
++++ b/geomstats/geometry/hypersphere.py
+@@ -581,7 +581,7 @@ class _Hypersphere(EmbeddedManifold):
+             n = gs.expand_dims(gs.arange(-n_max, n_max + 1), axis=-1)
+             t = gs.expand_dims(t, axis=0)
+             sigma_squared = t  # NOTE: factor 2 is needed empirically to match kernel?
+-            cos_theta = gs.sum(x0 * x, axis=-1)
++            cos_theta = gs.clip(gs.sum(x0 * x, axis=-1), -1.0, 1.0)
+             theta = gs.arccos(cos_theta)
+             coeffs = gs.exp(-gs.power(theta + 2 * math.pi * n, 2) / 2 / sigma_squared)
+             prob = gs.sum(coeffs, axis=0)
+diff --git a/geomstats/geometry/product_manifold.py b/geomstats/geometry/product_manifold.py
+index 8b839c13..acc6df72 100644
+--- a/geomstats/geometry/product_manifold.py
++++ b/geomstats/geometry/product_manifold.py
+@@ -428,7 +428,7 @@ class ProductSameManifold(Manifold):
+         return walks
+ 
+     def _log_heat_kernel(self, x0, x, t, n_max):
+-        t = t * jnp.ones((*x0.shape[:-1], self.mul))
++        t = t[..., None] * jnp.ones((*x0.shape[:-1], self.mul))
+ 
+         log_probs = self._iterate_over_manifolds(
+             "_log_heat_kernel", {"x0": x0, "x": x, "t": t, "n_max": n_max}, out_axes=-1
